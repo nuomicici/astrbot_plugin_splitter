@@ -52,7 +52,7 @@
   },
   "log_factor": {
     "description": "对数延迟模式的系数。",
-    "hint": "公式：Base + Factor * log(字数 + 1)。系数越大，字数对延迟的影响越明显。",
+    "hint": "公式：基础延迟 + 系数 * log(字数 + 1)。系数越大，字数对延迟的影响越明显。",
     "type": "float",
     "default": 0.8
   }
