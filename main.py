@@ -5,7 +5,7 @@ from typing import List
 
 # 导入必要的模块
 # 参考: listen-message-event.md (事件监听), plugin-config.md (配置), send-message.md (消息组件)
-from astrbot.api.event import filter, AstrMessageEvent
+from astrbot.api.event import filter, AstrMessageEvent, MessageChain
 from astrbot.api.star import Context, Star, register
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.message_components import Plain, BaseMessageComponent
@@ -50,8 +50,13 @@ class MessageSplitterPlugin(Star):
                     continue
                 
                 try:
+                    # 【修复点】send_message 需要 MessageChain 对象，而非 list
+                    # 实例化 MessageChain 并将列表赋值给 chain 属性
+                    mc = MessageChain()
+                    mc.chain = segment_chain
+                    
                     # 使用 unified_msg_origin 确保发送到正确的会话
-                    await self.context.send_message(event.unified_msg_origin, segment_chain)
+                    await self.context.send_message(event.unified_msg_origin, mc)
                     
                     # 避免最后一段发送后还等待
                     if i < len(segments) - 1:
