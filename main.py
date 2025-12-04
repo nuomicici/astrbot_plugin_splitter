@@ -1,165 +1,131 @@
 import re
-import json
 import asyncio
 from typing import List
 
 from astrbot.api.event import filter, AstrMessageEvent, MessageChain
 from astrbot.api.star import Context, Star, register
 from astrbot.api import AstrBotConfig, logger
+from astrbot.api.provider import LLMResponse
 from astrbot.api.message_components import Plain, BaseMessageComponent
 
-@register("astrbot_plugin_splitter", "YourName", "LLM 输出自动分段发送插件", "1.0.1")
+@register("astrbot_plugin_splitter", "YourName", "LLM 输出自动分段发送插件", "1.0.2")
 class MessageSplitterPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
 
+    # 1. 标记阶段：当 LLM 生成响应时，给 Event 打上标记
+    # 参考: listen-message-event.md -> 事件钩子 -> LLM 请求完成时
+    @filter.on_llm_response()
+    async def on_llm_response(self, event: AstrMessageEvent, resp: LLMResponse):
+        # 动态给 event 对象挂载一个属性，用于在后续流程识别
+        setattr(event, "__is_llm_reply", True)
+
+    # 2. 拦截与分发阶段：发送消息前触发
+    # 参考: listen-message-event.md -> 事件钩子 -> 发送消息前
     @filter.on_decorating_result()
     async def on_decorating_result(self, event: AstrMessageEvent):
-        """
-        拦截消息发送，进行历史记录保存、文本清理、分段发送。
-        """
+        # 检查标记：如果不是 LLM 的回复，直接放行
+        if not getattr(event, "__is_llm_reply", False):
+            return
+
         result = event.get_result()
         if not result or not result.chain:
             return
 
-        # 1. 获取配置
-        split_pattern = self.config.get("split_regex", r"\n\s*\n")
-        clean_pattern = self.config.get("clean_regex", "")
-        delay = self.config.get("delay", 1.0)
+        # 获取配置
+        pattern = self.config.get("split_regex", r"[。？！\n]+")
+        delay = self.config.get("delay", 1.5)
 
-        # 2. 预处理：构建完整文本用于历史记录，并执行清理
-        full_text_for_history = ""
-        cleaned_chain = []
+        # 执行分段
+        segments = self.split_chain_keep_delimiter(result.chain, pattern)
 
-        for component in result.chain:
-            if isinstance(component, Plain):
-                text = component.text
-                full_text_for_history += text # 记录原始文本到历史（或者记录清理后的，视需求而定，这里记录原始的）
-                
-                # 执行清理逻辑
-                if clean_pattern:
-                    text = re.sub(clean_pattern, "", text)
-                
-                # 如果清理后还有内容，加入待处理链
-                if text:
-                    cleaned_chain.append(Plain(text))
-            else:
-                # 非文本组件直接保留
-                cleaned_chain.append(component)
-
-        # 3. 执行分段逻辑
-        segments = self.split_chain(cleaned_chain, split_pattern)
-
-        # 如果没有分段（长度为1），且清理并未改变链条结构，则不做干预，让原流程继续
-        # 但如果进行了清理（cleaned_chain != result.chain），即使没分段也要接管发送
-        is_cleaned = (clean_pattern != "")
-        
-        if len(segments) <= 1 and not is_cleaned:
+        # 如果没有触发分段（只有1段），则不做任何处理，让 AstrBot 原样发送
+        if len(segments) <= 1:
             return
 
-        logger.info(f"[Splitter] 消息已处理: 分段数={len(segments)}, 是否清理={is_cleaned}")
+        logger.info(f"[Splitter] LLM 回复已分段，共 {len(segments)} 段。")
 
-        # 4. 【关键步骤】手动保存 LLM 回复到对话历史
-        # 因为我们要清空原消息链，AstrBot 核心可能无法正确记录历史，或者记录为空。
-        # 我们需要手动将 Assistant 的回复追加到当前 Conversation 中。
-        await self.save_history(event, full_text_for_history)
-
-        # 5. 发送分段消息
+        # 遍历分段并发送
         for i, segment_chain in enumerate(segments):
             if not segment_chain:
                 continue
-            
+
             try:
-                # 修复之前的 'list' object has no attribute 'chain' 错误
+                # 构造消息链对象
                 mc = MessageChain()
                 mc.chain = segment_chain
                 
+                # 发送消息
+                # 参考: send-message.md -> 主动消息
                 await self.context.send_message(event.unified_msg_origin, mc)
-                
+
+                # 如果不是最后一段，等待
                 if i < len(segments) - 1:
                     await asyncio.sleep(delay)
+
             except Exception as e:
-                logger.error(f"[Splitter] 发送分段消息失败: {e}")
+                logger.error(f"[Splitter] 发送分段 {i+1} 失败: {e}")
 
-        # 6. 【关键步骤】阻止源消息发送
-        # 使用 chain.clear() 确保没有任何内容传递给适配器，解决“重复发送”和“发送两次”的问题
+        # 3. 关键处理：清空原始消息链
+        # 我们不使用 stop_event()，因为那会中断 AstrBot 对用户消息的记录流程。
+        # 我们只是把“原本要发的一大坨消息”清空，让 AstrBot 认为“发送了一个空消息”，
+        # 这样既不会重复发送，也能保证会话生命周期正常结束（用户消息会被正常记录）。
         result.chain.clear()
-        # 显式停止事件传播，防止后续可能的钩子触发
-        event.stop_event()
 
-    async def save_history(self, event: AstrMessageEvent, content: str):
+    def split_chain_keep_delimiter(self, chain: List[BaseMessageComponent], pattern: str) -> List[List[BaseMessageComponent]]:
         """
-        手动将 Assistant 的回复写入对话历史
+        分段算法：保留标点符号，将其附着在分割后的文本末尾。
         """
-        try:
-            conv_mgr = self.context.conversation_manager
-            # 获取当前对话 ID
-            cid = await conv_mgr.get_curr_conversation_id(event.unified_msg_origin)
-            if not cid:
-                return
-
-            # 获取对话对象
-            conversation = await conv_mgr.get_conversation(event.unified_msg_origin, cid)
-            if not conversation:
-                return
-
-            # 解析历史记录 (通常是 JSON 字符串)
-            history_list = []
-            if conversation.history:
-                try:
-                    history_list = json.loads(conversation.history)
-                except json.JSONDecodeError:
-                    history_list = []
-            
-            # 追加 Assistant 消息
-            # 注意：这里假设上一条 User 消息已经被 AstrBot 核心逻辑添加进去了。
-            # 通常 User 消息在处理开始时添加，Assistant 在处理结束时添加。
-            # 我们拦截的是结束阶段，所以追加 Assistant 消息是安全的。
-            history_list.append({
-                "role": "assistant",
-                "content": content
-            })
-
-            # 更新数据库
-            await conv_mgr.update_conversation(
-                unified_msg_origin=event.unified_msg_origin,
-                conversation_id=cid,
-                history=history_list
-            )
-        except Exception as e:
-            logger.error(f"[Splitter] 手动保存历史记录失败: {e}")
-
-    def split_chain(self, chain: List[BaseMessageComponent], pattern: str) -> List[List[BaseMessageComponent]]:
         segments = []
-        current_buffer = []
+        current_chain_buffer = []
 
         for component in chain:
             if isinstance(component, Plain):
                 text = component.text
-                # 使用正则分割
-                parts = re.split(pattern, text)
-
-                if len(parts) == 1:
-                    current_buffer.append(component)
-                else:
-                    if parts[0]:
-                        current_buffer.append(Plain(parts[0]))
+                
+                # 使用捕获组 () 包裹正则，re.split 会保留分隔符
+                # 例如 pattern = [!\n], text = "Hi! Hi" -> ['Hi', '!', ' Hi']
+                parts = re.split(f"({pattern})", text)
+                
+                # 遍历处理切割结果
+                # parts 的结构通常是: [文本, 分隔符, 文本, 分隔符, ...]
+                i = 0
+                while i < len(parts):
+                    part_text = parts[i]
                     
-                    if current_buffer:
-                        segments.append(current_buffer)
-                        current_buffer = []
-
-                    for mid_part in parts[1:-1]:
-                        if mid_part:
-                            segments.append([Plain(mid_part)])
+                    if not part_text: # 空字符串跳过（可能是正则在开头或结尾匹配产生的）
+                        i += 1
+                        continue
                     
-                    if parts[-1]:
-                        current_buffer.append(Plain(parts[-1]))
+                    # 检查下一个元素是否是分隔符 (因为使用了捕获组，分隔符在奇数索引位)
+                    # 但在这里我们的 parts 列表里，分隔符就在 i+1 的位置（如果存在）
+                    # 修正逻辑：re.split 输出里，偶数位是内容，奇数位是捕获的分隔符
+                    
+                    # 当前部分加入 buffer
+                    current_chain_buffer.append(Plain(part_text))
+                    
+                    # 检查是否有紧跟的分隔符
+                    if i + 1 < len(parts):
+                        delimiter = parts[i+1]
+                        # 将分隔符也加入当前 buffer
+                        current_chain_buffer.append(Plain(delimiter))
+                        
+                        # 遇到分隔符，说明这一段结束了
+                        segments.append(current_chain_buffer)
+                        current_chain_buffer = [] # 重置 buffer
+                        
+                        i += 2 # 跳过文本和分隔符
+                    else:
+                        # 没有分隔符了，说明是最后一段文本，留在 buffer 里等待后续组件
+                        i += 1
             else:
-                current_buffer.append(component)
+                # 非文本组件（图片、At等）直接加入当前 buffer
+                current_chain_buffer.append(component)
 
-        if current_buffer:
-            segments.append(current_buffer)
+        # 处理剩余的 buffer
+        if current_chain_buffer:
+            segments.append(current_chain_buffer)
 
-        return segments
+        # 过滤掉可能的空分段
+        return [seg for seg in segments if seg]
