@@ -58,7 +58,7 @@
     "type": "string",
     "options": ["单独", "跟随下段", "跟随上段", "嵌入"],
     "default": "嵌入"
-  }
+  },
   "other_media_strategy": {
     "description": "其他未知组件的分段策略。",
     "type": "string",
