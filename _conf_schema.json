@@ -8,7 +8,7 @@
   },
   "split_chars": {
     "description": "简单模式下的分段字符。文字后面带这些符号就会分段",
-    "hint": "仅分段模式为simple 时生效。输入想要分段的符号（换行是\\n，空格是），如：，。？！",
+    "hint": "仅分段模式为simple 时生效。输入想要分段的符号（换行是\\n，空格是\\s），如：，。？！\\n",
     "type": "string",
     "default": "。？！?!；;\\n"
   },
@@ -16,7 +16,7 @@
     "description": "正则模式下的表达式。",
     "hint": "仅在分段模式为 regex 时生效。",
     "type": "string",
-    "default": "[。？！?!\\n…]+"
+    "default": "[。？！?!\\n…\\s]+"
   },
   "clean_regex": {
     "description": "分段后清理内容的正则表达式。",
