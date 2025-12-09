@@ -10,15 +10,17 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.provider import LLMResponse
 from astrbot.api.message_components import Plain, BaseMessageComponent, Image, At, Face, Reply
 
-@register("message_splitter", "YourName", "智能消息分段插件", "1.5.0")
+@register("message_splitter", "YourName", "智能消息分段插件", "1.6.0")
 class MessageSplitterPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
         self.pair_map = {
             '“': '”', '《': '》', '（': '）', '(': ')', 
-            '[': ']', '{': '}', '"': '"', "'": "'"
+            '[': ']', '{': '}'
         }
+        # 包含引号和反引号的特殊成对符号
+        self.quote_chars = {'"', "'", "`"}
 
     @filter.on_llm_response()
     async def on_llm_response(self, event: AstrMessageEvent, resp: LLMResponse):
@@ -26,18 +28,35 @@ class MessageSplitterPlugin(Star):
 
     @filter.on_decorating_result()
     async def on_decorating_result(self, event: AstrMessageEvent):
-        # 1. 校验逻辑
-        if not getattr(event, "__is_llm_reply", False):
-            return
+        # 1. 基础防重入与校验
         if getattr(event, "__splitter_processed", False):
             return
-        setattr(event, "__splitter_processed", True)
 
         result = event.get_result()
         if not result or not result.chain:
             return
 
-        # 2. 获取基础配置
+        # 2. 作用范围检查 (新功能)
+        # split_scope: 'llm_only' (默认) 或 'all'
+        split_scope = self.config.get("split_scope", "llm_only")
+        is_llm_reply = getattr(event, "__is_llm_reply", False)
+
+        if split_scope == "llm_only" and not is_llm_reply:
+            return
+
+        # 3. 长度限制检查 (新功能)
+        # max_length_no_split: 超过此长度则强制不分段，0表示不限制
+        max_len_no_split = self.config.get("max_length_no_split", 0)
+        total_text_len = sum(len(c.text) for c in result.chain if isinstance(c, Plain))
+
+        if max_len_no_split > 0 and total_text_len > max_len_no_split:
+            logger.info(f"[Splitter] 文本总长({total_text_len}) 超过设定阈值({max_len_no_split})，为保证完整性，取消分段与清理。")
+            return
+
+        # 标记已处理（防止后续逻辑或其他插件重复触发）
+        setattr(event, "__splitter_processed", True)
+
+        # 4. 获取基础配置
         split_mode = self.config.get("split_mode", "regex")
         if split_mode == "simple":
             split_chars = self.config.get("split_chars", "。？！?!；;\n")
@@ -49,7 +68,7 @@ class MessageSplitterPlugin(Star):
         smart_mode = self.config.get("enable_smart_split", True)
         max_segs = self.config.get("max_segments", 7)
 
-        # 3. 获取组件策略配置
+        # 5. 获取组件策略配置
         enable_reply = self.config.get("enable_reply", True)
 
         # 策略选项: '跟随下段', '跟随上段', '单独', '嵌入'
@@ -60,11 +79,11 @@ class MessageSplitterPlugin(Star):
             'default': self.config.get("other_media_strategy", "跟随下段")
         }
 
-        # 4. 执行分段
+        # 6. 执行分段
         # 注意：此时 result.chain 中通常不包含 Reply 组件，因为框架还没加
         segments = self.split_chain_smart(result.chain, split_pattern, smart_mode, strategies, enable_reply)
 
-        # 5. 最大分段数限制
+        # 7. 最大分段数限制
         if len(segments) > max_segs and max_segs > 0:
             logger.warning(f"[Splitter] 分段数({len(segments)}) 超过限制({max_segs})，正在合并剩余段落。")
             merged_last_segment = []
@@ -78,7 +97,7 @@ class MessageSplitterPlugin(Star):
         if len(segments) <= 1 and not clean_pattern:
             return
 
-        # 6. 手动注入 Reply 组件
+        # 8. 手动注入 Reply 组件
         # 因为我们即将清空 result.chain，框架的自动引用逻辑会被跳过
         # 所以如果开启了引用，我们需要手动将其加到第一段的开头
         if enable_reply and segments and event.message_obj.message_id:
@@ -90,7 +109,7 @@ class MessageSplitterPlugin(Star):
 
         logger.info(f"[Splitter] 将发送 {len(segments)} 个分段。")
 
-        # 7. 逐段处理与发送
+        # 9. 逐段处理与发送
         for i, segment_chain in enumerate(segments):
             if not segment_chain:
                 continue
@@ -126,7 +145,7 @@ class MessageSplitterPlugin(Star):
             except Exception as e:
                 logger.error(f"[Splitter] 发送分段失败: {e}")
 
-        # 8. 清空原始链
+        # 10. 清空原始链
         # 这会导致框架的 ResultDecorateStage 认为没有内容可发，从而跳过后续处理（包括自动加引用）
         result.chain.clear()
 
@@ -243,20 +262,27 @@ class MessageSplitterPlugin(Star):
             char = text[i]
             is_opener = char in self.pair_map
             
-            if char in ['"', "'"]:
+            # 处理引号和反引号 (支持 ` " ')
+            # 如果是这些字符，它们既是开头也是结尾（对于同一种字符来说）
+            if char in self.quote_chars:
                 if stack and stack[-1] == char:
+                    # 栈顶是相同的引号/反引号 -> 闭合
                     stack.pop()
                     current_chunk += char
                     i += 1; continue
                 else:
+                    # 入栈 (开启引用)
                     stack.append(char)
                     current_chunk += char
                     i += 1; continue
             
+            # 处理成对的不同符号 (如 (), [], {})
             if stack:
                 expected_closer = self.pair_map.get(stack[-1])
-                if char == expected_closer: stack.pop()
-                elif is_opener: stack.append(char)
+                if char == expected_closer:
+                    stack.pop()
+                elif is_opener:
+                    stack.append(char)
                 current_chunk += char
                 i += 1; continue
             
@@ -265,6 +291,7 @@ class MessageSplitterPlugin(Star):
                 current_chunk += char
                 i += 1; continue
 
+            # 只有在栈为空时（不在引用/括号内），才尝试匹配分段符
             match = compiled_pattern.match(text, pos=i)
             if match:
                 delimiter = match.group()
