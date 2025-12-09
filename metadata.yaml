@@ -1,6 +1,6 @@
 name: "astrbot_plugin_splitter"
 display_name: "对话分段Pro"
-version: "v1.1.0"
+version: "v1.1.1"
 author: "糯米茨"
 desc: "代替框架分段，方便小白操作，添加更多人性化配置项，优化体验"
 repo: "https://github.com/nuomicici/astrbot_plugin_splitter"

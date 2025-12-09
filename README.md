@@ -4,7 +4,7 @@
 # 对话分段PRO
 
 
-[![查看日志（v1.0.0）](https://img.shields.io/badge/查看日志-blue?style=for-the-badge)](#日志) 
+[![查看日志（v1.1.1）](https://img.shields.io/badge/查看日志-blue?style=for-the-badge)](#日志) 
 [![未来计划](https://img.shields.io/badge/未来计划-purple?style=for-the-badge)](#未来计划)
 [![来许愿！](https://img.shields.io/badge/来许愿！-ff69b4?style=for-the-badge)](#联系)
 
@@ -13,6 +13,7 @@
 懒得写md文件了凑合看吧（
 ---
 
+## v1.1.1
 这是一个用于 AstrBot 的简单的消息处理插件。它能将 LLM 生成的长文本回复自动拆分为多条短消息依次发送，模拟人类的说话节奏，避免长篇大论的文字墙。  
 **特别的** ，解决了框架分段无法将@组件正常加入分段逻辑里的Bug
 
@@ -32,32 +33,30 @@
 
 ## 配置说明
 
-以下是插件支持的配置项，可在插件配置文件中调整：
-
-| 配置项 | 类型 | 默认值 | 说明 |
-| :--- | :--- | :--- | :--- |
-| `split_regex` | string | `[。？！?!\\n…]+` | 用于分段的正则表达式，匹配到此处时会进行拆分。 |
-| `clean_regex` | string | `""` (空) | 用于清理内容的正则表达式，匹配到的内容会被替换为空。 |
-| `enable_smart_split` | bool | `true` | 是否开启智能模式。开启后，不会在成对符号（引号、括号）内部进行拆分。 |
-| `max_segments` | int | `7` | 最大分段数量。超过此数量后，剩余内容将合并发送。设为 0 则不限制。 |
-| `delay_strategy` | string | `"log"` | 延迟策略。可选值：`log` (对数), `random` (随机), `fixed` (固定)。 |
+具体还是去配置页面看吧，有什么不懂的提issues或者去群里问也可以
 
 ### 延迟策略详情
 
-根据 `delay_strategy` 的不同，以下参数生效：
-
-*   **log (对数策略，默认)**: 根据字数计算延迟，字数越多延迟越久，但有上限。
-    *   `log_base`: 基础延迟 (默认 0.5秒)
-    *   `log_factor`: 系数 (默认 0.8)
-    *   计算公式: `base + factor * log(length + 1)`
-*   **random (随机策略)**:
-    *   `random_min`: 最小秒数 (默认 1.0)
-    *   `random_max`: 最大秒数 (默认 3.0)
-*   **fixed (固定策略)**:
-    *   `fixed_delay`: 固定延迟秒数 (默认 1.5)
+也是去配置页面看吧（）
 
 ## 注意事项
 
-*   插件仅处理带有 LLM 回复标记的消息。
+*   如果对正则不了解的话，建议不要修改，如果需要修改字符，可以用简单字符匹配
 *   如果拆分后只有一段且无清理规则，插件将不做处理，直接发送原消息。
 *   智能模式下，如果引号或括号未闭合（如只有左括号），可能会导致整段文本不拆分，这是为了保证语义完整性。
+
+# 日志
+## 2025.12.09
+- 上架
+- 添加了一点配置项目，如分段阈值和分段场景
+
+# 未来计划
+- [ ] 来提
+
+# 联系
+| 作者信息 | 交流/反馈 |
+| :--- | :--- |
+| **作者**: 糯米茨<br>**联系方式**: （许愿通道）<br>- [GitHub Issues](https://github.com/nuomicici/astrbot_plugin_Favour_Ultra/issues)<br>- [QQ](https://qm.qq.com/q/wMGXYfKKoS) | <img src="https://github.com/nuomicici/astrbot_plugin_Favour_Ultra/blob/main/QC.jpg?raw=true" width="240px"> |
+
+## 求你们了
+来~~鞭策~~支持一下叭！
