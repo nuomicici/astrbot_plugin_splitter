@@ -28,6 +28,11 @@
     "type": "int",
     "default": 7
   },
+  "max_length_no_split":{
+    "description":"分段阈值",
+    "type": "int",
+    "default": "0"
+  },
   "enable_smart_split": {
     "description": "是否开启智能识别(忽略引号内标点)。",
     "type": "bool",
