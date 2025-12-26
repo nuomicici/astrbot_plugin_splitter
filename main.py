@@ -16,7 +16,7 @@ class MessageSplitterPlugin(Star):
         self.config = config
         self.pair_map = {
             '“': '”', '《': '》', '（': '）', '(': ')', 
-            '[': ']', '{': '}','‘':'’'
+            '[': ']', '{': '}','‘':'’','【':'】','<':'>'
         }
         self.quote_chars = {'"', "'", "`"}
 
