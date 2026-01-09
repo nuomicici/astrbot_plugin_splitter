@@ -8,15 +8,16 @@ from astrbot.api.event import filter, AstrMessageEvent, MessageChain
 from astrbot.api.star import Context, Star, register
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.provider import LLMResponse
-from astrbot.api.message_components import Plain, BaseMessageComponent, Reply
+from astrbot.api.message_components import Plain, BaseMessageComponent, Reply, Record
+from astrbot.core.star.session_llm_manager import SessionServiceManager
 
 class MessageSplitterPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
         self.pair_map = {
-            '“': '”', '《': '》', '（': '）', '(': ')', 
-            '[': ']', '{': '}','‘':'’','【':'】','<':'>'
+            '"': '"', '《': '》', '（': '）', '(': ')', 
+            '[': ']', '{': '}', "'": "'", '【': '】', '<': '>'
         }
         self.quote_chars = {'"', "'", "`"}
 
@@ -116,6 +117,10 @@ class MessageSplitterPlugin(Star):
                 continue
 
             try:
+                # --- 处理TTS ---
+                segment_chain = await self._process_tts_for_segment(event, segment_chain)
+                # ---------------
+                
                 # --- 日志输出 ---
                 self._log_segment(i + 1, len(segments), segment_chain, "主动发送")
                 # ---------------
@@ -159,6 +164,79 @@ class MessageSplitterPlugin(Star):
         # 替换换行符以便在单行日志中显示，如果需要完全原始输出可去掉 replace
         log_content = content_str.replace('\n', '\\n')
         logger.info(f"[Splitter] 第 {index}/{total} 段 ({method}): {log_content}")
+
+    async def _process_tts_for_segment(self, event: AstrMessageEvent, segment: List[BaseMessageComponent]) -> List[BaseMessageComponent]:
+        """为分段处理TTS（如果启用）"""
+        # 检查是否启用分段TTS
+        enable_tts_for_segments = self.config.get("enable_tts_for_segments", True)
+        if not enable_tts_for_segments:
+            return segment
+        
+        # 获取框架TTS配置
+        try:
+            # 使用和框架相同的逻辑检查TTS是否应该启用
+            all_config = self.context.get_config(event.unified_msg_origin)
+            tts_config = all_config.get("provider_tts_settings", {})
+            tts_enabled = tts_config.get("enable", False)
+            
+            if not tts_enabled:
+                return segment
+            
+            # 获取TTS provider
+            tts_provider = self.context.get_using_tts_provider(event.unified_msg_origin)
+            if not tts_provider:
+                return segment
+            
+            # 检查是否应该处理TTS（会话级别和LLM结果检查）
+            result = event.get_result()
+            if not result or not result.is_llm_result():
+                return segment
+            
+            if not await SessionServiceManager.should_process_tts_request(event):
+                return segment
+            
+            # 检查触发概率
+            tts_trigger_probability = tts_config.get("trigger_probability", 1.0)
+            try:
+                tts_trigger_probability = max(0.0, min(float(tts_trigger_probability), 1.0))
+            except (TypeError, ValueError):
+                tts_trigger_probability = 1.0
+            
+            if random.random() > tts_trigger_probability:
+                return segment
+            
+            # 获取其他TTS配置
+            dual_output = tts_config.get("dual_output", False)
+            
+            # 处理segment中的每个Plain组件
+            new_segment = []
+            for comp in segment:
+                if isinstance(comp, Plain) and len(comp.text) > 1:
+                    try:
+                        logger.info(f"[Splitter] TTS 请求: {comp.text[:50]}...")
+                        audio_path = await tts_provider.get_audio(comp.text)
+                        logger.info(f"[Splitter] TTS 结果: {audio_path}")
+                        
+                        if audio_path:
+                            # 创建Record组件
+                            new_segment.append(Record(file=audio_path, url=audio_path))
+                            # 如果启用双重输出，也添加文本
+                            if dual_output:
+                                new_segment.append(comp)
+                        else:
+                            logger.warning(f"[Splitter] TTS 音频文件未找到，使用文本发送")
+                            new_segment.append(comp)
+                    except Exception as e:
+                        logger.error(f"[Splitter] TTS 处理失败: {e}，使用文本发送")
+                        new_segment.append(comp)
+                else:
+                    new_segment.append(comp)
+            
+            return new_segment
+            
+        except Exception as e:
+            logger.error(f"[Splitter] TTS 配置检查失败: {e}，跳过TTS处理")
+            return segment
 
     def calculate_delay(self, text: str) -> float:
         strategy = self.config.get("delay_strategy", "linear")
