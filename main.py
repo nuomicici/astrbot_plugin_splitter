@@ -415,7 +415,7 @@ class MessageSplitterPlugin(Star):
         ratio_max = self._get_cfg("balanced_split_ratio_max", 0.9)
         
         while i < n:
-            if text.startswith("```", i):
+            if text.startswith("```", i) and (i == 0 or text[i-1] == chr(10)):
                 idx = text.find("```", i + 3)
                 if idx != -1: chunk += text[i:idx+3]; weight += idx+3-i; i = idx+3; continue
                 else: chunk += text[i:]; weight += n-i; break
