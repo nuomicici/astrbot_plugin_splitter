@@ -1,3 +1,10 @@
+# 更新提醒
+如果使用出现问题，请回退版本。方法为：卸载新版本插件，从插件安装页通过URL
+```
+https://github.com/nuomicici/astrbot_plugin_splitter/releases/tag/v1.4.2
+```
+安装
+
 # 更新日志
 ## 1.4.3
 > 日期：2026-08-15
