@@ -337,6 +337,54 @@ class MessageSplitterPlugin(Star):
     def _remove_reply_components(self, chain: List[BaseMessageComponent]) -> List[BaseMessageComponent]:
         return [comp for comp in chain if not isinstance(comp, Reply)]
 
+    def _chain_has_voice(self, chain: List[BaseMessageComponent]) -> bool:
+        """检查消息链中是否已存在语音组件（Record）。
+
+        用于判断是否有 TTS 插件提前将文本转换为语音，
+        此时应屏蔽消息引用（Reply），避免语音消息带引用时发送异常或功能混乱。
+        """
+        return any(isinstance(c, Record) for c in chain)
+
+    async def _will_use_framework_tts(self, event: AstrMessageEvent) -> bool:
+        """检查框架内置 TTS 是否会对当前会话生效。
+
+        复用与 _process_tts_for_segment 相同的判断逻辑，
+        在实际转换前预判是否将产生语音输出，用于提前屏蔽消息引用。
+        """
+        if not self._get_cfg("enable_tts_for_segments", True):
+            return False
+        try:
+            get_config = getattr(self.context, "get_config", None)
+            if not callable(get_config):
+                return False
+            try:
+                cfg_sig = inspect.signature(get_config)
+                cfg_params = [p for p in cfg_sig.parameters.values() if p.default is inspect.Parameter.empty]
+                if len(cfg_params) >= 1:
+                    all_cfg = get_config(event.unified_msg_origin)
+                else:
+                    all_cfg = get_config()
+            except (ValueError, TypeError):
+                all_cfg = get_config(event.unified_msg_origin)
+            tts_cfg = all_cfg.get("provider_tts_settings", {})
+            if not tts_cfg.get("enable", False):
+                return False
+            get_tts = getattr(self.context, "get_using_tts_provider", None)
+            if not callable(get_tts):
+                return False
+            tts_prov = get_tts(event.unified_msg_origin)
+            if not tts_prov:
+                return False
+            if SessionServiceManager is not None:
+                should_tts = getattr(SessionServiceManager, "should_process_tts_request", None)
+                if callable(should_tts) and not await should_tts(event):
+                    return False
+            # 只要触发概率大于 0，就认为可能会转 TTS，保守地屏蔽引用
+            prob = float(tts_cfg.get("trigger_probability", 1.0))
+            return prob > 0.0
+        except Exception:
+            return False
+
     @filter.event_message_type(filter.EventMessageType.ALL, priority=1000)
     async def on_message(self, event: AstrMessageEvent):
         self_id_getter = getattr(event, "get_self_id", None)
@@ -404,6 +452,12 @@ class MessageSplitterPlugin(Star):
     async def on_decorating_result(self, event: AstrMessageEvent):
         result = event.get_result()
         if not result or not result.chain: return
+        # 仅使用 result 级别的锁防止同一 result 对象被重复处理。
+        # 注意：不能使用 event 级别的锁，因为 Agent 工具调用场景下
+        # 框架会在同一个 event 对象上多次 yield 新的 result（每次工具调用
+        # 结束后以及最终回复各产生一个全新的 MessageEventResult 实例），
+        # event 级别的锁会导致工具调用后的最终 LLM 回复不被分段。
+        # 参见：https://github.com/nuomicici/astrbot_plugin_splitter/issues/32
         if getattr(result, "__splitter_processed", False): return
         if getattr(event, "__splitter_event_processed", False): return
         setattr(event, "__splitter_event_processed", True)
@@ -540,15 +594,29 @@ class MessageSplitterPlugin(Star):
                 if not any(not isinstance(c, (Plain, Reply)) for c in segments[-1]):
                     segments[-2].extend(segments.pop())
 
-        # --- 6. 回复处理 ---
+        # --- 6. 语音检测与回复处理 ---
         source_id = str(getattr(event.message_obj, "message_id", "") or "")
         enable_reply = self._get_cfg("enable_reply", True)
         enable_smart = self._get_cfg("enable_smart_reply", False)
 
+        # 检查是否将以语音方式回复：
+        #   情形 A：TTS 插件（如 fish-speech 等）已提前将文本转为 Record 组件写入 chain
+        #   情形 B：框架内置 TTS 已启用，会在分段发送时将 Plain 转为 Record
+        # 以上任一情形下，均屏蔽消息引用（Reply），避免语音消息带引用时发送异常或功能混乱。
+        plugin_has_voice = self._chain_has_voice(result.chain)
+        framework_will_tts = await self._will_use_framework_tts(event)
+        suppress_reply_for_voice = plugin_has_voice or framework_will_tts
+        if suppress_reply_for_voice:
+            logger.info("[Splitter] 检测到语音输出，已自动屏蔽消息引用（Reply）")
+
+        # 实际的引用开关：同时受"语音屏蔽"影响
+        effective_enable_reply = enable_reply and not suppress_reply_for_voice
+
         if segments and source_id:
             if enable_smart:
-                if self._should_add_smart_reply(event): self._prepend_reply(segments[0], source_id)
-            elif enable_reply:
+                if self._should_add_smart_reply(event) and not suppress_reply_for_voice:
+                    self._prepend_reply(segments[0], source_id)
+            elif effective_enable_reply:
                 self._prepend_reply(segments[0], source_id)
 
         # --- 7. 后处理 (At/清理/TTS) ---
@@ -570,13 +638,17 @@ class MessageSplitterPlugin(Star):
 
         if len(segments) <= 1 and not at_needs_proc:
             final = segments[0] if segments else []
-            if enable_smart and not enable_reply: final = self._remove_reply_components(final)
+            if enable_smart and not effective_enable_reply:
+                final = self._remove_reply_components(final)
+            elif suppress_reply_for_voice:
+                final = self._remove_reply_components(final)
             result.chain.clear(); result.chain.extend(final); return
 
         # --- 8. 发送 ---
         for i in range(len(segments) - 1):
             seg_chain = segments[i]
-            if i > 0 and enable_smart and not enable_reply: seg_chain = self._remove_reply_components(seg_chain)
+            if i > 0 and enable_smart and not effective_enable_reply:
+                seg_chain = self._remove_reply_components(seg_chain)
             text_content = "".join([c.text for c in seg_chain if isinstance(c, Plain)])
             if not text_content.strip(" \t\r\n\u200b") and not any(not isinstance(c, Plain) for c in seg_chain): continue
             
@@ -586,6 +658,9 @@ class MessageSplitterPlugin(Star):
 
             try:
                 seg_chain = await self._process_tts_for_segment(event, seg_chain)
+                # 框架 TTS 转换后若产生了 Record，也需要确保 Reply 已被移除
+                if self._chain_has_voice(seg_chain):
+                    seg_chain = self._remove_reply_components(seg_chain)
                 self._log_segment(i + 1, len(segments), seg_chain, "主动发送")
                 mc = MessageChain(); mc.chain = seg_chain
                 await self.context.send_message(event.unified_msg_origin, mc)
@@ -596,7 +671,10 @@ class MessageSplitterPlugin(Star):
         if enable_smart and source_id: self._mark_bot_reply(event, source_id)
 
         last_seg = segments[-1]
-        if enable_smart and not enable_reply: last_seg = self._remove_reply_components(last_seg)
+        if enable_smart and not effective_enable_reply:
+            last_seg = self._remove_reply_components(last_seg)
+        elif suppress_reply_for_voice:
+            last_seg = self._remove_reply_components(last_seg)
         result.chain.clear(); result.chain.extend(last_seg)
 
     def _log_segment(self, index: int, total: int, chain: List[BaseMessageComponent], method: str):
