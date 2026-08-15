@@ -1,200 +1,445 @@
 {
-  "split_mode": {
-    "description": "分段识别模式。",
-    "hint": "Regex: 使用正则表达式匹配; Simple: 使用指定字符列表匹配。",
+  "config_mode": {
+    "description": "配置模式",
+    "hint": "「简易模式」只显示几个核心开关，适合新手；「进阶模式」可用列表自定义分段符号和清理文本；「专业模式」使用正则表达式完整控制所有行为。切换后请保存并重载插件。",
     "type": "string",
-    "options": ["regex", "simple"],
-    "default": "regex"
+    "options": ["简易模式", "进阶模式", "专业模式"],
+    "default": "简易模式"
   },
-  "split_chars": {
-    "description": "简单模式下的分段符号(仅Simple生效)",
-    "hint": "可添加多个符号或文本，文字后面带这些内容就会分段（换行是 \\n），如添加：。 或 ！ 或 \\n",
-    "type": "list",
-    "default": ["。", "？", "！", "?", "!", "；", ";", "\n"]
+
+  "simple_settings": {
+    "description": "简易设置",
+    "type": "object",
+    "hint": "只需调几个开关，插件就能自动帮你把机器人的长消息拆成几条发送，看起来更像真人聊天。",
+    "condition": {"config_mode": "简易模式"},
+    "items": {
+      "enable_split": {
+        "description": "开启分段发送",
+        "hint": "打开后，机器人的长回复会自动拆成几条消息依次发出，看起来更像真人聊天。关闭则一整条发出。",
+        "type": "bool",
+        "default": true
+      },
+      "max_segments_simple": {
+        "description": "最多拆成几条",
+        "hint": "一条长回复最多拆成几条消息。建议 3~7 条，太多了刷屏，太少了效果不明显。",
+        "type": "int",
+        "default": 5
+      },
+      "send_speed": {
+        "description": "发送节奏",
+        "hint": "每条消息之间等多久再发下一条。「自然」根据即将发送的文字长短自动调节，像真人打字；「快速」几乎不停顿；「慢速」每条之间停久一点。",
+        "type": "string",
+        "options": ["自然", "快速", "慢速"],
+        "default": "自然"
+      },
+      "protect_emoji": {
+        "description": "保护表情符号",
+        "hint": "打开后会在提示词中注入额外指令，让颜文字不被拆散。注意：会轻微影响 AI 回复内容，如无需要建议关闭。",
+        "type": "bool",
+        "default": false
+      },
+      "image_handling": {
+        "description": "图片怎么发",
+        "hint": "「单独发」图片单独一条消息发出；「跟文字一起」图片跟前后的文字合在同一条消息里。",
+        "type": "string",
+        "options": ["单独发", "跟文字一起"],
+        "default": "单独发"
+      },
+      "enable_reply_simple": {
+        "description": "保留引用回复",
+        "hint": "打开后，分段发送的第一条消息会自动引用（回复）触发消息，看起来更有对话感。关闭则不引用。",
+        "type": "bool",
+        "default": true
+      },
+      "remove_texts_simple": {
+        "description": "删除特定文本",
+        "hint": "把不想看到的内容填在这里，机器人回复中出现这些文字时会自动删掉。每行填一个。比如填「注：」就会删掉所有的「注：」。",
+        "type": "list",
+        "default": []
+      }
+    }
   },
-  "split_regex": {
-    "description": "正则模式下的分段表达式(仅Regex生效)",
-    "hint": "支持高级正则匹配规则。",
-    "type": "string",
-    "default": "[。？！?!\\n…]+"
+
+  "advanced_settings": {
+    "description": "进阶设置",
+    "type": "object",
+    "hint": "可以自定义分段符号、清理文本等。不需要懂正则表达式，用列表配置即可。",
+    "condition": {"config_mode": "进阶模式"},
+    "items": {
+      "enable_group_split_adv": {
+        "description": "群聊分段",
+        "hint": "群聊中是否启用分段发送。",
+        "type": "bool",
+        "default": true
+      },
+      "split_scope_adv": {
+        "description": "分段范围",
+        "hint": "「仅AI回复」只拆分 AI 的回复；「全部输出」连其他插件的输出也一起拆分。",
+        "type": "string",
+        "options": ["仅AI回复", "全部输出"],
+        "default": "仅AI回复"
+      },
+      "split_chars_adv": {
+        "description": "从哪些符号后断开",
+        "hint": "遇到这些符号时，从符号后面断开分成两段。每行填一个符号或文本。换行符请填 \\n。",
+        "type": "list",
+        "default": ["。", "？", "！", "?", "!", "；", ";", "\n"]
+      },
+      "no_split_around_adv": {
+        "description": "这些文本前后不分段",
+        "hint": "填入文本或符号组合，当分段点紧邻这些文本时不会断开。例如填入「Provider」，则「测试。 Provider 是」不会在「。」后断开。每行填一个。",
+        "type": "list",
+        "default": []
+      },
+      "max_segments_adv": {
+        "description": "最多拆成几段",
+        "hint": "一条长回复最多拆成几段。建议 3~7 段。",
+        "type": "int",
+        "default": 7
+      },
+      "balanced_split_adv": {
+        "description": "智能均分段落",
+        "hint": "打开后尽量让每段长度接近，避免出现特别长或特别短的段。",
+        "type": "bool",
+        "default": true
+      },
+      "clean_before_items_adv": {
+        "description": "分段前删除这些文本",
+        "hint": "在拆分之前，先把这些文本从回复中删掉。每行填一个。",
+        "type": "list",
+        "default": []
+      },
+      "clean_after_items_adv": {
+        "description": "分段后删除这些文本",
+        "hint": "拆分之后，再从每段中删掉这些文本。每行填一个。",
+        "type": "list",
+        "default": []
+      },
+      "inject_kaomoji_prompt_adv": {
+        "description": "颜文字保护",
+        "hint": "打开后会在提示词中注入额外指令，让颜文字不被拆散。注意：会轻微影响 AI 回复内容，如无需要建议关闭。",
+        "type": "bool",
+        "default": false
+      },
+      "replace_rules_adv": {
+        "description": "文本替换规则",
+        "hint": "在分段前执行文本替换。支持 \\n（换行）\\t（制表符）\\s（空格）。",
+        "type": "template_list",
+        "default": [],
+        "templates": {
+          "replace_rule": {
+            "name": "替换规则",
+            "items": {
+              "find": {
+                "description": "查找文本",
+                "hint": "要查找的文本。",
+                "type": "string",
+                "default": ""
+              },
+              "replace": {
+                "description": "替换为",
+                "hint": "替换后的文本。留空则为删除。",
+                "type": "string",
+                "default": ""
+              }
+            }
+          }
+        }
+      },
+      "reverse_replace_adv": {
+        "description": "反向替换",
+        "hint": "开启后，替换规则会同时反向作用于用户输入。例如设置「1→2」，AI 回复中的「1」会显示为「2」，而用户发送的「2」会被还原为「1」再交给 AI。特别的，可用于规避部分模型安全检查。",
+        "type": "bool",
+        "default": false
+      },
+      "send_speed_adv": {
+        "description": "发送节奏",
+        "hint": "每条消息之间等多久再发下一条。「自然」根据即将发送的文字长短自动调节；「快速」几乎不停顿；「慢速」每条之间停久一点。",
+        "type": "string",
+        "options": ["自然", "快速", "慢速"],
+        "default": "自然"
+      },
+      "image_strategy_adv": {
+        "description": "图片怎么发",
+        "hint": "「单独」图片单独一条消息；「跟随下段」图片跟下一段文字合并；「跟随上段」图片跟上一段文字合并。",
+        "type": "string",
+        "options": ["单独", "跟随下段", "跟随上段"],
+        "default": "单独"
+      },
+      "conversation_blacklist_adv": {
+        "description": "对话黑名单",
+        "hint": "填入对话标识，这些对话不会启用分段。",
+        "type": "list",
+        "default": []
+      },
+      "conversation_whitelist_adv": {
+        "description": "对话白名单",
+        "hint": "仅对白名单中的对话启用分段；黑名单优先。留空则对所有对话生效。",
+        "type": "list",
+        "default": []
+      }
+    }
   },
-  "clean_before_items": {
-    "description": "【分段前】清理文本项(仅Simple生效)",
-    "hint": "在切分之前执行，直接删除填入的准确文本。非常适合新手填入 <think> 或 </think> 进行脱敏。",
-    "type": "list",
-    "default": []
+
+  "basic_settings": {
+    "description": "基础设置",
+    "type": "object",
+    "hint": "控制插件启用范围与基础触发条件。",
+    "condition": {"config_mode": "专业模式"},
+    "items": {
+      "enable_group_split": {
+        "description": "群聊分段",
+        "hint": "群聊中是否启用分段发送。",
+        "type": "bool",
+        "default": true
+      },
+      "split_scope": {
+        "description": "分段范围",
+        "hint": "只处理 LLM 回复，或连插件输出一起分段。",
+        "type": "string",
+        "options": ["llm_only", "all"],
+        "default": "llm_only"
+      },
+      "max_length_no_split": {
+        "description": "最短触发字数",
+        "hint": "文本少于该字数时不分段；填 0 关闭。",
+        "type": "int",
+        "default": 0
+      },
+      "max_length_to_disable": {
+        "description": "最长处理字数",
+        "hint": "文本超过该字数时直接跳过分段；填 0 关闭。",
+        "type": "int",
+        "default": 0
+      },
+      "conversation_blacklist": {
+        "description": "对话黑名单",
+        "hint": "这些对话不会启用分段。",
+        "type": "list",
+        "default": []
+      },
+      "conversation_whitelist": {
+        "description": "对话白名单",
+        "hint": "仅对白名单中的对话启用分段；黑名单优先。",
+        "type": "list",
+        "default": []
+      }
+    }
   },
-  "clean_after_items": {
-    "description": "【分段后】清理文本项(仅Simple生效)",
-    "hint": "在分段完成、发送前执行删除。注意不要误删关键标点。",
-    "type": "list",
-    "default": []
+  "split_settings": {
+    "description": "分段规则",
+    "type": "object",
+    "hint": "控制如何识别分段点与均分行为。专业模式仅使用正则表达式。",
+    "condition": {"config_mode": "专业模式"},
+    "items": {
+      "split_regex": {
+        "description": "分段正则",
+        "hint": "用于匹配分段点的正则表达式。",
+        "type": "string",
+        "default": "[。？！?!\\\\n…]+"
+      },
+      "no_split_around": {
+        "description": "这些文本前后不分段",
+        "hint": "填入文本或符号组合，当分段点紧邻这些文本时不会断开。例如填入「Provider」，则「测试。 Provider 是」不会在「。」后断开。每行填一个。",
+        "type": "list",
+        "default": []
+      },
+      "enable_smart_split": {
+        "description": "智能识别",
+        "hint": "尽量避免在引号、成对符号内部切分。",
+        "type": "bool",
+        "default": true
+      },
+      "balanced_split_mode": {
+        "description": "智能均分",
+        "hint": "按总字数和段数尽量均匀分配每段长度。",
+        "type": "bool",
+        "default": false
+      },
+      "max_segments": {
+        "description": "最大段数",
+        "type": "int",
+        "default": 7
+      },
+      "min_segment_length": {
+        "description": "最小段长",
+        "hint": "均分模式下避免切出过短碎片。",
+        "type": "int",
+        "default": 10
+      },
+      "balanced_split_ratio_min": {
+        "description": "均分下限比",
+        "hint": "低于理想长度该比例时不切分。",
+        "type": "float",
+        "default": 0.4
+      },
+      "balanced_split_ratio_max": {
+        "description": "均分上限比",
+        "hint": "高于理想长度该比例时尝试次级标点切分。",
+        "type": "float",
+        "default": 0.9
+      },
+      "trim_segment_edge_blank_lines": {
+        "description": "清理首尾空行",
+        "hint": "仅清理每段两端空行，不影响段内换行。",
+        "type": "bool",
+        "default": true
+      }
+    }
   },
-  "clean_before_regex": {
-    "description": "【分段前】高级清理正则(仅Regex生效)",
-    "hint": "会在切分之前执行！如填写 <think>.*?</think> 将可安全地彻底剥离外置思维链而不受后续切分影响。",
-    "type": "string",
-    "default": ""
+  "clean_settings": {
+    "description": "文本清理",
+    "type": "object",
+    "hint": "使用正则表达式控制分段前后的文本删除与替换。",
+    "condition": {"config_mode": "专业模式"},
+    "items": {
+      "clean_before_regex": {
+        "description": "前置清理正则",
+        "hint": "在分段前执行正则清理。",
+        "type": "string",
+        "default": ""
+      },
+      "clean_after_regex": {
+        "description": "后置清理正则",
+        "hint": "在分段后逐段执行正则清理。",
+        "type": "string",
+        "default": ""
+      },
+      "inject_kaomoji_prompt": {
+        "description": "颜文字保护",
+        "hint": "在请求前追加提示词，减少颜文字被错误切分。注意：会注入额外提示词，可能轻微影响 AI 回复。",
+        "type": "bool",
+        "default": false
+      },
+      "replace_rules": {
+        "description": "文本替换规则",
+        "hint": "在分段前执行文本替换，每条规则包含查找和替换两个字段。支持转义符 \\n（换行）\\t（制表符）\\s（空格）。",
+        "type": "template_list",
+        "default": [],
+        "templates": {
+          "replace_rule": {
+            "name": "替换规则",
+            "items": {
+              "find": {
+                "description": "查找文本",
+                "hint": "要查找的原始文本，支持 \\n \\t \\s 转义。",
+                "type": "string",
+                "default": ""
+              },
+              "replace": {
+                "description": "替换为",
+                "hint": "替换后的文本，支持 \\n \\t \\s 转义。留空则为删除。",
+                "type": "string",
+                "default": ""
+              }
+            }
+          }
+        }
+      },
+      "reverse_replace": {
+        "description": "反向替换",
+        "hint": "开启后，替换规则会同时反向作用于用户输入。例如设置「1→2」，AI 回复中的「1」会显示为「2」，而用户发送的「2」会被还原为「1」再交给 AI。特别的，可用于规避部分模型安全检查。",
+        "type": "bool",
+        "default": false
+      }
+    }
   },
-  "clean_after_regex": {
-    "description": "【分段后】高级清理正则(仅Regex生效)",
-    "hint": "在分段完成、发送前对每个被切割好的段落执行清理。",
-    "type": "string",
-    "default": ""
+  "reply_media_settings": {
+    "description": "回复与组件",
+    "type": "object",
+    "hint": "控制 Reply 行为与图片、At、表情等组件的分段策略。",
+    "condition": {"config_mode": "专业模式"},
+    "items": {
+      "enable_smart_reply": {
+        "description": "智能回复",
+        "hint": "发送前检测当前消息后是否已有新消息，有则给第一段加 Reply。",
+        "type": "bool",
+        "default": false
+      },
+      "enable_reply": {
+        "description": "保留回复",
+        "hint": "保留原有 Reply，并决定最后一段是否继续携带 Reply。",
+        "type": "bool",
+        "default": true
+      },
+      "image_strategy": {
+        "description": "图片策略",
+        "hint": "图片如何跟随上下文或单独发送。",
+        "type": "string",
+        "options": ["单独", "跟随下段", "跟随上段", "嵌入"],
+        "default": "单独"
+      },
+      "at_strategy": {
+        "description": "At 策略",
+        "hint": "At 组件的分段归属方式。",
+        "type": "string",
+        "options": ["单独", "跟随下段", "跟随上段", "嵌入"],
+        "default": "跟随下段"
+      },
+      "face_strategy": {
+        "description": "表情策略",
+        "hint": "表情组件的分段归属方式。",
+        "type": "string",
+        "options": ["单独", "跟随下段", "跟随上段", "嵌入"],
+        "default": "嵌入"
+      },
+      "other_media_strategy": {
+        "description": "其他组件策略",
+        "hint": "未知组件的分段归属方式。",
+        "type": "string",
+        "options": ["单独", "跟随下段", "跟随上段", "嵌入"],
+        "default": "跟随下段"
+      }
+    }
   },
-  "conversation_blacklist": {
-    "description": "对话黑名单",
-    "hint": "填入 unified_msg_origin (如 aiocqhttp:group_message:123456)，匹配到的对话将不启用分段。",
-    "type": "list",
-    "default": []
-  },
-  "conversation_whitelist": {
-    "description": "对话白名单",
-    "hint": "若不为空，则仅对白名单内的对话启用分段。黑名单优先级更高。",
-    "type": "list",
-    "default": []
-  },
-  "enable_group_split": {
-    "description": "是否开启群聊分段",
-    "hint": "当群组分段导致刷屏时，可关闭该开关，默认开启。",
-    "type": "bool",
-    "default": true
-  },
-  "trim_segment_edge_blank_lines": {
-    "description": "是否清理每段首尾空行。",
-    "hint": "开启后，仅移除每个分段开头和结尾的空白行，不影响段内正文换行。",
-    "type": "bool",
-    "default": true
-  },
-  "inject_kaomoji_prompt": {
-    "description": "是否注入颜文字保护提示词。",
-    "hint": "开启后，会在 LLM 请求前追加提示，要求将颜文字用三反引号包裹，减少被错误分段的概率。",
-    "type": "bool",
-    "default": true
-  },
-  "max_segments": {
-    "description": "最大分段数量。",
-    "type": "int",
-    "default": 7
-  },
-  "max_length_no_split": {
-    "description": "分段字数下限阈值",
-    "hint": "少于多少字不执行分段。填 0 禁用此功能。",
-    "type": "int",
-    "default": 0
-  },
-  "max_length_to_disable": {
-    "description": "分段字数上限阈值(启动条件)",
-    "hint": "当文本总长度超过此数值时，完全不启用分段逻辑。填 0 禁用此功能。",
-    "type": "int",
-    "default": 0
-  },
-  "balanced_split_mode": {
-    "description": "智能均分模式",
-    "hint": "开启后，会自动用总字数除以最大分段数，尽量让每段字数均匀分布。",
-    "type": "bool",
-    "default": false
-  },
-  "min_segment_length": {
-    "description": "均分时的最小段落长度",
-    "hint": "防止均分时切出只有几个字的碎片，建议设置 10-20。",
-    "type": "int",
-    "default": 10
-  },
-  "balanced_split_ratio_min": {
-    "description": "均分模式下，低于理想长度的该比例时不切分",
-    "type": "float",
-    "default": 0.4
-  },
-  "balanced_split_ratio_max": {
-    "description": "均分模式下，高于理想长度的该比例时寻找次级标点切分",
-    "type": "float",
-    "default": 0.9
-  },
-  "enable_smart_split": {
-    "description": "是否开启智能识别(忽略引号内标点)。",
-    "type": "bool",
-    "default": true
-  },
-  "enable_reply": {
-    "description": "是否保留回复引用。",
-    "hint": "开启后，将在第一段消息中引用用户的原消息；关闭则不引用。",
-    "type": "bool",
-    "default": true
-  },
-  "split_scope": {
-    "description": "分段内容范围",
-    "hint": "默认只对 LLM 生成内容进行分段，可选择把插件输出也一起切了",
-    "type": "string",
-    "options": ["llm_only", "all"],
-    "default": "llm_only"
-  },
-  "image_strategy": {
-    "description": "图片组件的分段策略。",
-    "hint": "单独: 单独一条消息; 跟随下段: 跟随下一段文字; 跟随上段: 跟随上一段文字; 嵌入: 视为普通字符嵌入。",
-    "type": "string",
-    "options": ["单独", "跟随下段", "跟随上段", "嵌入"],
-    "default": "单独"
-  },
-  "at_strategy": {
-    "description": "At(@)组件的分段策略。",
-    "hint": "注意：通常 LLM 不会生成 At 组件，此选项仅对其他插件生成的 At 生效。",
-    "type": "string",
-    "options": ["单独", "跟随下段", "跟随上段", "嵌入"],
-    "default": "跟随下段"
-  },
-  "face_strategy": {
-    "description": "表情(Face)组件的分段策略。",
-    "type": "string",
-    "options": ["单独", "跟随下段", "跟随上段", "嵌入"],
-    "default": "嵌入"
-  },
-  "other_media_strategy": {
-    "description": "其他未知组件的分段策略。",
-    "type": "string",
-    "options": ["单独", "跟随下段", "跟随上段", "嵌入"],
-    "default": "跟随下段"
-  },
-  "delay_strategy": {
-    "description": "分段发送的延迟策略。",
-    "hint": "Linear: 线性延迟(字数*系数); Log: 对数延迟; Random: 随机; Fixed: 固定。",
-    "type": "string",
-    "options": ["linear", "log", "random", "fixed"],
-    "default": "linear"
-  },
-  "linear_base": {
-    "description": "线性延迟的基础时间(秒)。",
-    "type": "float",
-    "default": 0.5
-  },
-  "linear_factor": {
-    "description": "线性延迟的单字系数(秒/字)。",
-    "type": "float",
-    "default": 0.1
-  },
-  "log_base": {
-    "description": "对数延迟的基础时间(秒)。",
-    "type": "float",
-    "default": 0.5
-  },
-  "log_factor": {
-    "description": "对数延迟的系数。",
-    "type": "float",
-    "default": 0.8
-  },
-  "random_min": {
-    "description": "随机延迟最小值(秒)。",
-    "type": "float",
-    "default": 1.0
-  },
-  "random_max": {
-    "description": "随机延迟最大值(秒)。",
-    "type": "float",
-    "default": 3.0
-  },
-  "fixed_delay": {
-    "description": "固定延迟时间(秒)。",
-    "type": "float",
-    "default": 1.5
+  "delay_settings": {
+    "description": "发送延迟",
+    "type": "object",
+    "hint": "控制分段发送间隔。延迟基于即将发送的下一段文字长度计算，模拟真人打字节奏。",
+    "condition": {"config_mode": "专业模式"},
+    "items": {
+      "delay_strategy": {
+        "description": "延迟策略",
+        "hint": "Linear 线性（基于下一段字数）；Log 对数；Random 随机；Fixed 固定。",
+        "type": "string",
+        "options": ["linear", "log", "random", "fixed"],
+        "default": "linear"
+      },
+      "linear_base": {
+        "description": "线性基础值",
+        "type": "float",
+        "default": 0.5
+      },
+      "linear_factor": {
+        "description": "线性字数系数",
+        "type": "float",
+        "default": 0.1
+      },
+      "log_base": {
+        "description": "对数基础值",
+        "type": "float",
+        "default": 0.5
+      },
+      "log_factor": {
+        "description": "对数系数",
+        "type": "float",
+        "default": 0.8
+      },
+      "random_min": {
+        "description": "随机最小值",
+        "type": "float",
+        "default": 1.0
+      },
+      "random_max": {
+        "description": "随机最大值",
+        "type": "float",
+        "default": 3.0
+      },
+      "fixed_delay": {
+        "description": "固定延迟值",
+        "type": "float",
+        "default": 1.5
+      }
+    }
   }
 }
