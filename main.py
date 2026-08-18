@@ -459,8 +459,6 @@ class MessageSplitterPlugin(Star):
         # event 级别的锁会导致工具调用后的最终 LLM 回复不被分段。
         # 参见：https://github.com/nuomicici/astrbot_plugin_splitter/issues/32
         if getattr(result, "__splitter_processed", False): return
-        if getattr(event, "__splitter_event_processed", False): return
-        setattr(event, "__splitter_event_processed", True)
 
         # --- 1. 基础校验 ---
         # 简易模式下，enable_split 为 False 时完全禁用分段
