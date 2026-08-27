@@ -46,7 +46,7 @@ class MessageSplitterPlugin(Star):
         # 定义成对出现的字符，在智能分段时避免在这些符号内部切断
         self.pair_map = {
             '"': '"', "《": "》", "（": "）", "(": ")",
-            "[": "]", "{": "}", "'": "'", "【": "】", "<": ">",
+            "[": "]", "{": "}", "'": "'", "【": "】", "「": "」", "『": "』", "<": ">",
         }
         # 定义引用/引号字符
         self.quote_chars = {'"', "'", "`"}
@@ -874,8 +874,10 @@ class MessageSplitterPlugin(Star):
 
             char = text[i]
             if char in self.quote_chars:
-                if stack and stack[-1] == char: stack.pop()
-                else: stack.append(char)
+                if stack and stack[-1] == char: 
+                    stack.pop()
+                elif not stack: 
+                    stack.append(char)
             elif not stack and char in self.pair_map: stack.append(char)
             elif stack and char == self.pair_map.get(stack[-1]): stack.pop()
             
