@@ -6,6 +6,12 @@ https://github.com/nuomicici/astrbot_plugin_splitter/releases/tag/v1.4.2
 安装
 
 # 更新日志
+## 1.4.4
+> 日期：2026-08-27
+1. 修复 Agent 工具调用后 LLM 最终回复不被分段的问题（移除 event 级重入锁，保留 result 级锁，#34）
+2. 智能分段新增「」『』成对符号保护，避免在这些括号内部错误切分（#31）
+3. 修复智能分段中 quote char 无条件入栈导致的括号匹配失败、分段停摆问题（#31）
+4. 新增回归测试 tests/test_tool_call_reentry.py，防止 event 级重入锁问题复发
 ## 1.4.3
 > 日期：2026-08-15
 1. 修复工具调用后 LLM 最终回复不被分段的问题（移除 event 级重入锁，保留 result 级锁）
