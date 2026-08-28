@@ -6,6 +6,12 @@ https://github.com/nuomicici/astrbot_plugin_splitter/releases/tag/v1.4.3
 安装
 
 # 更新日志
+## 1.4.6
+> 日期：2026-08-29
+1. 说明已知限制：无法对「仅 AI 回复」模式下的主动发送 LLM 消息进行分段。
+   原因：插件通过劫持 `Context.send_message` 拦截主动发送，但 `send_message` 只接收 `MessageChain`，不携带 `result_content_type` 标记，无法区分该消息是否为 LLM 输出。为尊重「仅 AI 回复」的配置语义（非 LLM 输出不应被分段），当 `split_scope=llm_only` 时插件主动跳过所有主动发送消息的分段。
+   影响：当分段范围为「仅 AI 回复」时，插件/函数工具主动推送的 LLM 消息不会被分段；如需对主动消息分段，请将分段范围改为「全部输出」（此时非 LLM 的主动消息也会被分段）。
+2. 修复主动发送分段在 `split_scope=llm_only` 时仍误处理非 LLM 消息的问题
 ## 1.4.5
 > 日期：2026-08-28
 1. 对主动消息也支持分段：插件/函数工具通过 `send_message` 主动推送的消息现在也会被分段发送（需将分段范围设为「全部输出」，主动消息链无标记，无法按「仅 AI 回复」筛选）
