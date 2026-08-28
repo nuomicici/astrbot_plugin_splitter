@@ -572,6 +572,14 @@ class MessageSplitterPlugin(Star):
         if not self._get_cfg("enable_group_split", True) and is_group:
             return False
 
+        # 分段范围：主动发送的消息链没有 result_content_type 标记，
+        # 无法可靠判断是否为 LLM 输出。当 split_scope=llm_only 时，
+        # 为尊重"仅 LLM 分段"的配置语义，跳过主动发送分段。
+        # 若需要对主动发送分段，请将 split_scope 设为"全部输出"。
+        split_scope = self._get_cfg("split_scope", "llm_only")
+        if split_scope == "llm_only":
+            return False
+
         # 仅当存在文本时才可能分段
         total_text_len = sum(len(c.text) for c in chain if isinstance(c, Plain))
         max_len_no_split = self._get_cfg("max_length_no_split", 0)
