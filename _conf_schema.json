@@ -51,6 +51,12 @@
         "type": "bool",
         "default": true
       },
+      "enable_proactive_split_simple": {
+        "description": "主动发送也分段",
+        "hint": "打开后，插件/函数工具主动推送的消息也会被分段。关闭则只分段机器人被动回复的消息。",
+        "type": "bool",
+        "default": true
+      },
       "remove_texts_simple": {
         "description": "删除特定文本",
         "hint": "把不想看到的内容填在这里，机器人回复中出现这些文字时会自动删掉。每行填一个。比如填「注：」就会删掉所有的「注：」。",
@@ -69,6 +75,12 @@
       "enable_group_split_adv": {
         "description": "群聊分段",
         "hint": "群聊中是否启用分段发送。",
+        "type": "bool",
+        "default": true
+      },
+      "enable_proactive_split_adv": {
+        "description": "主动发送分段",
+        "hint": "开启后，插件/函数工具通过 send_message 主动发送的消息也会被分段。框架默认不为主动发送的消息提供分段入口。",
         "type": "bool",
         "default": true
       },
@@ -190,6 +202,12 @@
       "enable_group_split": {
         "description": "群聊分段",
         "hint": "群聊中是否启用分段发送。",
+        "type": "bool",
+        "default": true
+      },
+      "enable_proactive_split": {
+        "description": "主动发送分段",
+        "hint": "开启后，插件/函数工具通过 send_message 主动发送的消息也会被分段。框架默认不为主动发送的消息提供分段入口，此处通过劫持 send_message 实现。",
         "type": "bool",
         "default": true
       },
