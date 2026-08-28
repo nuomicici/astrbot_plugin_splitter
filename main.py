@@ -567,8 +567,8 @@ class MessageSplitterPlugin(Star):
             return False
         if whitelist and umo not in whitelist:
             return False
-        # 仅根据 umo 判断是否为群聊（格式 平台:消息类型:会话ID）
-        is_group = ":GROUP_MESSAGE:" in umo
+        # 仅根据 umo 判断是否为群聊（格式 平台id:GroupMessage:会话ID，message_type.value 大小写为 GroupMessage）
+        is_group = ":GroupMessage:" in umo
         if not self._get_cfg("enable_group_split", True) and is_group:
             return False
 
@@ -597,11 +597,14 @@ class MessageSplitterPlugin(Star):
     def _build_synthetic_event(self, session):
         """根据 session 构造一个最小可用的合成 AstrMessageEvent。
 
-        仅填充 _do_split_and_send 实际访问的属性：unified_msg_origin、message_obj。
+        通过调用 AstrMessageEvent.__init__ 确保所有内部属性（session、platform、
+        trace 等）正确初始化，避免 __new__ 跳过初始化导致的 AttributeError。
         """
         try:
             from astrbot.core.platform.astrbot_message import AstrBotMessage
             from astrbot.core.platform.message_session import MessageSesion
+            from astrbot.core.platform.astr_message_event import AstrMessageEvent
+            from astrbot.core.platform.message_type import MessageType
 
             if isinstance(session, str):
                 ses = MessageSesion.from_str(session)
@@ -615,30 +618,33 @@ class MessageSplitterPlugin(Star):
             msg.message = []
             msg.sender = None
             msg.self_id = ""
-            msg.type = ses.message_type
-            if ses.message_type and "GROUP" in getattr(ses.message_type, "value", "").upper():
+            # __init__ 会校验 message_type，必须是合法 MessageType
+            msg.type = ses.message_type if isinstance(ses.message_type, MessageType) else MessageType.FRIEND_MESSAGE
+            if msg.type and "GROUP" in getattr(msg.type, "value", "").upper():
                 msg.group_id = ses.session_id
-
-            from astrbot.core.platform.astr_message_event import AstrMessageEvent
 
             # platform_meta 仅用于 get_platform_name / get_platform_id 等只读访问，
             # 用一个最小占位对象避免 AttributeError（不继承 PlatformMetadata 抽象类）。
             class _FakeMeta:
-                def __init__(self):
-                    self.id = ses.platform_id
-                    self.name = ses.platform_id
-                    self.display_name = ses.platform_id
+                def __init__(self, pid):
+                    self.id = pid
+                    self.name = pid
+                    self.display_name = pid
                     self.description = ""
-                    self.adapter_display_name = ses.platform_id
+                    self.adapter_display_name = pid
                     self.support_streaming_message = False
                     self.support_proactive_message = True
 
-            syn_event = AstrMessageEvent.__new__(AstrMessageEvent)
-            syn_event.message_str = msg.message_str
-            syn_event.message_obj = msg
-            syn_event.platform_meta = _FakeMeta()
-            syn_event.session_id = msg.session_id
-            syn_event.unified_msg_origin = str(ses)
+            # AstrMessageEvent 是 abc.ABC 但无抽象方法，可直接实例化。
+            # 走构造函数确保 session、unified_msg_origin(由 session 派生) 等属性就绪。
+            syn_event = AstrMessageEvent(
+                message_str=msg.message_str,
+                message_obj=msg,
+                platform_meta=_FakeMeta(ses.platform_id),
+                session_id=msg.session_id,
+            )
+            # 构造函数内 unified_msg_origin 由 session 派生，应与原始 session 一致
+            # 无需再手动设置 session_id / unified_msg_origin
             return syn_event
         except Exception:
             logger.error("[Splitter] 构造合成事件失败", exc_info=True)
