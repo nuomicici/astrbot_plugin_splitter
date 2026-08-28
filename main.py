@@ -597,8 +597,10 @@ class MessageSplitterPlugin(Star):
     def _build_synthetic_event(self, session):
         """根据 session 构造一个最小可用的合成 AstrMessageEvent。
 
-        通过调用 AstrMessageEvent.__init__ 确保所有内部属性（session、platform、
-        trace 等）正确初始化，避免 __new__ 跳过初始化导致的 AttributeError。
+        使用 __new__ 创建实例后，手动初始化 _do_split_and_send 实际访问的属性。
+        注意：必须直接给 self.session 赋值 MessageSession 实例，
+        不能使用 self.session_id 属性（其 setter 依赖 self.session，
+        在未初始化时会抛 AttributeError）。
         """
         try:
             from astrbot.core.platform.astrbot_message import AstrBotMessage
@@ -635,17 +637,28 @@ class MessageSplitterPlugin(Star):
                     self.support_streaming_message = False
                     self.support_proactive_message = True
 
-            # AstrMessageEvent 是 abc.ABC 但无抽象方法，可直接实例化。
-            # 走构造函数确保 session、unified_msg_origin(由 session 派生) 等属性就绪。
-            syn_event = AstrMessageEvent(
-                message_str=msg.message_str,
-                message_obj=msg,
-                platform_meta=_FakeMeta(ses.platform_id),
-                session_id=msg.session_id,
-            )
-            # 构造函数内 unified_msg_origin 由 session 派生，应与原始 session 一致
-            # 无需再手动设置 session_id / unified_msg_origin
-            return syn_event
+            # 直接 __new__ 绕过 __init__（__init__ 内部会构造 TraceSpan 等额外对象，
+            # 且不同框架版本实现可能不一致）。手动赋值所需属性：
+            #   - self.session       : MessageSession 实例（unified_msg_origin 由它派生）
+            #   - self.message_obj   : AstrBotMessage
+            #   - self.platform_meta  : 占位元数据
+            #   - self.message_str    : 空字符串
+            #   - self._result        : None（_do_split_and_send 不读）
+            #   - self._extras        : 字典（部分框架方法可能访问）
+            ev = AstrMessageEvent.__new__(AstrMessageEvent)
+            ev.message_str = ""
+            ev.message_obj = msg
+            ev.platform_meta = _FakeMeta(ses.platform_id)
+            # 直接赋值 MessageSession 实例，避免触发 session_id 属性 setter
+            ev.session = ses
+            # back compatibility
+            ev.platform = ev.platform_meta
+            ev._result = None
+            ev._extras = {}
+            ev._has_send_oper = False
+            ev._force_stopped = False
+            ev.plugins_name = None
+            return ev
         except Exception:
             logger.error("[Splitter] 构造合成事件失败", exc_info=True)
             return None
