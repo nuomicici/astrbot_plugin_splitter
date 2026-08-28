@@ -3,6 +3,7 @@ import re
 import math
 import random
 import asyncio
+import contextvars
 import inspect
 from collections import defaultdict, deque
 from typing import List, Dict, Any
@@ -45,7 +46,7 @@ class MessageSplitterPlugin(Star):
 
         # 主动发送拦截：防止拦截器自身调用原始 send_message 时形成无限递归。
         # 使用 ContextVar 做任务级隔离，避免多会话并发互相干扰。
-        self._proactive_inhibit = asyncio.ContextVar("__splitter_proactive_inhibit", default=False)
+        self._proactive_inhibit = contextvars.ContextVar("__splitter_proactive_inhibit", default=False)
 
         # 定义成对出现的字符，在智能分段时避免在这些符号内部切断
         self.pair_map = {
