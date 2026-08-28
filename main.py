@@ -43,6 +43,10 @@ class MessageSplitterPlugin(Star):
         # 防止同一对话并发分段处理导致重复发送
         self._processing_locks: Dict[str, asyncio.Lock] = {}
 
+        # 主动发送拦截：防止拦截器自身调用原始 send_message 时形成无限递归。
+        # 使用 ContextVar 做任务级隔离，避免多会话并发互相干扰。
+        self._proactive_inhibit = asyncio.ContextVar("__splitter_proactive_inhibit", default=False)
+
         # 定义成对出现的字符，在智能分段时避免在这些符号内部切断
         self.pair_map = {
             '"': '"', "《": "》", "（": "）", "(": ")",
@@ -51,6 +55,21 @@ class MessageSplitterPlugin(Star):
         # 定义引用/引号字符
         self.quote_chars = {'"', "'", "`"}
         self.secondary_pattern = re.compile(r"[，,、；;]+")
+
+    @filter.on_astrbot_loaded()
+    async def _on_loaded(self):
+        """AstrBot 初始化完成后，劫持 Context.send_message 以拦截主动发送的消息。
+
+        框架没有为主动发送（self.context.send_message）提供装饰钩子入口，
+        主动发送的消息直接走 platform.send_by_session，完全绕过流水线，
+        因此 on_decorating_result 无法对其分段。这里通过 monkey-patch
+        在 Context.send_message 上包裹一层：将消息链交给分段逻辑处理，
+        处理完的多段再依次调用原始 send_message 发出。
+        """
+        if not self._get_cfg("enable_proactive_split", True):
+            logger.info("[Splitter] 主动发送分段已关闭，跳过 send_message 劫持")
+            return
+        self._install_send_message_patch()
 
     def _get_cfg(self, key: str, default: Any = None) -> Any:
         """
@@ -98,6 +117,7 @@ class MessageSplitterPlugin(Star):
 
         # --- 开关 ---
         self._simple_overrides["enable_group_split"] = self._get_simple_cfg("enable_split", True)
+        self._simple_overrides["enable_proactive_split"] = self._get_simple_cfg("enable_proactive_split_simple", True)
 
         # --- 最大段数 ---
         self._simple_overrides["max_segments"] = self._get_simple_cfg("max_segments_simple", 5)
@@ -154,6 +174,7 @@ class MessageSplitterPlugin(Star):
 
         # --- 基础 ---
         self._simple_overrides["enable_group_split"] = self._get_adv_cfg("enable_group_split_adv", True)
+        self._simple_overrides["enable_proactive_split"] = self._get_adv_cfg("enable_proactive_split_adv", True)
         scope = self._get_adv_cfg("split_scope_adv", "仅AI回复")
         self._simple_overrides["split_scope"] = "llm_only" if scope == "仅AI回复" else "all"
 
@@ -239,9 +260,9 @@ class MessageSplitterPlugin(Star):
 
         # 2. 结构迁移：将顶层的扁平配置移动到嵌套对象中
         mapping = {
-            "simple_settings": ["enable_split", "max_segments_simple", "send_speed", "protect_emoji", "image_handling", "enable_reply_simple", "remove_texts_simple"],
-            "advanced_settings": ["enable_group_split_adv", "split_scope_adv", "split_chars_adv", "no_split_around_adv", "max_segments_adv", "balanced_split_adv", "clean_before_items_adv", "clean_after_items_adv", "inject_kaomoji_prompt_adv", "replace_rules_adv", "reverse_replace_adv", "send_speed_adv", "image_strategy_adv", "conversation_blacklist_adv", "conversation_whitelist_adv"],
-            "basic_settings": ["enable_group_split", "split_scope", "max_length_no_split", "max_length_to_disable", "conversation_blacklist", "conversation_whitelist"],
+            "simple_settings": ["enable_split", "max_segments_simple", "send_speed", "protect_emoji", "image_handling", "enable_reply_simple", "enable_proactive_split_simple", "remove_texts_simple"],
+            "advanced_settings": ["enable_group_split_adv", "enable_proactive_split_adv", "split_scope_adv", "split_chars_adv", "no_split_around_adv", "max_segments_adv", "balanced_split_adv", "clean_before_items_adv", "clean_after_items_adv", "inject_kaomoji_prompt_adv", "replace_rules_adv", "reverse_replace_adv", "send_speed_adv", "image_strategy_adv", "conversation_blacklist_adv", "conversation_whitelist_adv"],
+            "basic_settings": ["enable_group_split", "enable_proactive_split", "split_scope", "max_length_no_split", "max_length_to_disable", "conversation_blacklist", "conversation_whitelist"],
             "split_settings": ["split_mode", "split_chars", "split_regex", "no_split_around", "enable_smart_split", "balanced_split_mode", "max_segments", "min_segment_length", "balanced_split_ratio_min", "balanced_split_ratio_max", "trim_segment_edge_blank_lines"],
             "clean_settings": ["clean_before_items", "clean_after_items", "clean_before_regex", "clean_after_regex", "inject_kaomoji_prompt", "replace_rules", "reverse_replace"],
             "reply_media_settings": ["enable_smart_reply", "enable_reply", "image_strategy", "at_strategy", "face_strategy", "other_media_strategy"],
@@ -459,8 +480,6 @@ class MessageSplitterPlugin(Star):
         # event 级别的锁会导致工具调用后的最终 LLM 回复不被分段。
         # 参见：https://github.com/nuomicici/astrbot_plugin_splitter/issues/32
         if getattr(result, "__splitter_processed", False): return
-        if getattr(event, "__splitter_event_processed", False): return
-        setattr(event, "__splitter_event_processed", True)
 
         # --- 1. 基础校验 ---
         # 简易模式下，enable_split 为 False 时完全禁用分段
@@ -492,9 +511,153 @@ class MessageSplitterPlugin(Star):
         conv_key = self._get_conversation_key(event)
         lock = self._get_processing_lock(conv_key)
         async with lock:
-            await self._do_split_and_send(event, result)
+            await self._do_split_and_send(event, result, is_proactive=False)
 
-    async def _do_split_and_send(self, event: AstrMessageEvent, result):
+    # ------------------------------------------------------------------
+    # 主动发送拦截（monkey-patch Context.send_message）
+    # ------------------------------------------------------------------
+    def _install_send_message_patch(self):
+        """劫持 Context.send_message，对主动发送的消息执行分段。
+
+        用 _splitter_original_send_message 保存原始实现，避免重复 patch。
+        通过 ContextVar 在分段内部回调原始 send_message 时设置 inhibiting 标记，
+        防止形成无限递归。
+        """
+        ctx = self.context
+        if getattr(ctx, "_splitter_send_patched", False):
+            return
+        original = ctx.send_message
+        setattr(ctx, "_splitter_original_send_message", original)
+        setattr(ctx, "_splitter_send_patched", True)
+
+        async def patched_send_message(session, message_chain):
+            # 命中 inhibiting 标记，说明是分段内部回调原始发送，直接放行
+            if self._proactive_inhibit.get():
+                return await original(session, message_chain)
+            try:
+                handled = await self._handle_proactive_send(session, message_chain)
+                if handled:
+                    return True
+            except Exception:
+                logger.error("[Splitter] 主动发送分段失败，回退原发送", exc_info=True)
+            return await original(session, message_chain)
+
+        ctx.send_message = patched_send_message
+        logger.info("[Splitter] 已劫持 Context.send_message，启用主动发送分段")
+
+    async def _handle_proactive_send(self, session, message_chain) -> bool:
+        """处理主动发送的消息。返回 True 表示已处理，False 表示交回原发送逻辑。
+
+        Args:
+            session: unified_msg_origin 字符串或 MessageSesion 对象。
+            message_chain: MessageChain 对象。
+        """
+        if message_chain is None:
+            return False
+        chain = getattr(message_chain, "chain", None)
+        if not chain:
+            return False
+
+        # 黑白名单 / 总开关（简易模式关闭时整体不拦截）
+        umo = str(session)
+        blacklist = self._get_cfg("conversation_blacklist", [])
+        whitelist = self._get_cfg("conversation_whitelist", [])
+        if umo in blacklist:
+            return False
+        if whitelist and umo not in whitelist:
+            return False
+        # 仅根据 umo 判断是否为群聊（格式 平台:消息类型:会话ID）
+        is_group = ":GROUP_MESSAGE:" in umo
+        if not self._get_cfg("enable_group_split", True) and is_group:
+            return False
+
+        # 仅当存在文本时才可能分段
+        total_text_len = sum(len(c.text) for c in chain if isinstance(c, Plain))
+        max_len_no_split = self._get_cfg("max_length_no_split", 0)
+        if max_len_no_split > 0 and total_text_len < max_len_no_split:
+            return False
+        max_len_disable = self._get_cfg("max_length_to_disable", 0)
+        if max_len_disable > 0 and total_text_len > max_len_disable:
+            return False
+
+        # 构造合成事件 + 合成结果，复用 _do_split_and_send
+        syn_event = self._build_synthetic_event(session)
+        if syn_event is None:
+            return False
+        syn_result = self._build_synthetic_result(message_chain)
+
+        # 复用同一会话的并发锁，避免与被动分段相互冲突
+        conv_key = self._get_conversation_key(syn_event)
+        lock = self._get_processing_lock(conv_key)
+        async with lock:
+            await self._do_split_and_send(syn_event, syn_result, is_proactive=True)
+        return True
+
+    def _build_synthetic_event(self, session):
+        """根据 session 构造一个最小可用的合成 AstrMessageEvent。
+
+        仅填充 _do_split_and_send 实际访问的属性：unified_msg_origin、message_obj。
+        """
+        try:
+            from astrbot.core.platform.astrbot_message import AstrBotMessage
+            from astrbot.core.platform.message_session import MessageSesion
+
+            if isinstance(session, str):
+                ses = MessageSesion.from_str(session)
+            else:
+                ses = session
+
+            msg = AstrBotMessage()
+            msg.session_id = ses.session_id
+            msg.message_id = ""  # 主动发送无源消息 ID
+            msg.message_str = ""
+            msg.message = []
+            msg.sender = None
+            msg.self_id = ""
+            msg.type = ses.message_type
+            if ses.message_type and "GROUP" in getattr(ses.message_type, "value", "").upper():
+                msg.group_id = ses.session_id
+
+            from astrbot.core.platform.astr_message_event import AstrMessageEvent
+
+            # platform_meta 仅用于 get_platform_name / get_platform_id 等只读访问，
+            # 用一个最小占位对象避免 AttributeError（不继承 PlatformMetadata 抽象类）。
+            class _FakeMeta:
+                def __init__(self):
+                    self.id = ses.platform_id
+                    self.name = ses.platform_id
+                    self.display_name = ses.platform_id
+                    self.description = ""
+                    self.adapter_display_name = ses.platform_id
+                    self.support_streaming_message = False
+                    self.support_proactive_message = True
+
+            syn_event = AstrMessageEvent.__new__(AstrMessageEvent)
+            syn_event.message_str = msg.message_str
+            syn_event.message_obj = msg
+            syn_event.platform_meta = _FakeMeta()
+            syn_event.session_id = msg.session_id
+            syn_event.unified_msg_origin = str(ses)
+            return syn_event
+        except Exception:
+            logger.error("[Splitter] 构造合成事件失败", exc_info=True)
+            return None
+
+    def _build_synthetic_result(self, message_chain):
+        """将主动发送的 MessageChain 包装为 MessageEventResult，以复用分段逻辑。"""
+        from astrbot.api.event import MessageEventResult
+        from astrbot.core.message.message_event_result import ResultContentType
+
+        result = MessageEventResult()
+        result.chain = list(getattr(message_chain, "chain", []) or [])
+        result.use_t2i_ = getattr(message_chain, "use_t2i_", None)
+        result.use_markdown_ = getattr(message_chain, "use_markdown_", None)
+        result.type = getattr(message_chain, "type", None)
+        # 主动发送不视为 LLM 结果：当 split_scope=llm_only 时不会触发，保持原行为
+        result.result_content_type = ResultContentType.GENERAL_RESULT
+        return result
+
+    async def _do_split_and_send(self, event: AstrMessageEvent, result, is_proactive: bool = False):
         setattr(result, "__splitter_processed", True)
         split_mode = self._get_cfg("split_mode", "regex")
         # 专业模式强制使用正则
@@ -603,8 +766,9 @@ class MessageSplitterPlugin(Star):
         #   情形 A：TTS 插件（如 fish-speech 等）已提前将文本转为 Record 组件写入 chain
         #   情形 B：框架内置 TTS 已启用，会在分段发送时将 Plain 转为 Record
         # 以上任一情形下，均屏蔽消息引用（Reply），避免语音消息带引用时发送异常或功能混乱。
+        # 主动发送场景没有真实 event 会话，框架内置 TTS 无法判定，因此跳过情形 B。
         plugin_has_voice = self._chain_has_voice(result.chain)
-        framework_will_tts = await self._will_use_framework_tts(event)
+        framework_will_tts = False if is_proactive else await self._will_use_framework_tts(event)
         suppress_reply_for_voice = plugin_has_voice or framework_will_tts
         if suppress_reply_for_voice:
             logger.info("[Splitter] 检测到语音输出，已自动屏蔽消息引用（Reply）")
@@ -642,7 +806,13 @@ class MessageSplitterPlugin(Star):
                 final = self._remove_reply_components(final)
             elif suppress_reply_for_voice:
                 final = self._remove_reply_components(final)
-            result.chain.clear(); result.chain.extend(final); return
+            if is_proactive:
+                # 主动发送没有后续 respond stage 托底，需自行发出单段
+                await self._send_proactive_segment(event, final, 1, 1)
+                result.chain.clear()
+            else:
+                result.chain.clear(); result.chain.extend(final)
+            return
 
         # --- 8. 发送 ---
         for i in range(len(segments) - 1):
@@ -657,13 +827,13 @@ class MessageSplitterPlugin(Star):
             delay = self.calculate_delay(next_text)
 
             try:
-                seg_chain = await self._process_tts_for_segment(event, seg_chain)
-                # 框架 TTS 转换后若产生了 Record，也需要确保 Reply 已被移除
-                if self._chain_has_voice(seg_chain):
-                    seg_chain = self._remove_reply_components(seg_chain)
-                self._log_segment(i + 1, len(segments), seg_chain, "主动发送")
-                mc = MessageChain(); mc.chain = seg_chain
-                await self.context.send_message(event.unified_msg_origin, mc)
+                if not is_proactive:
+                    seg_chain = await self._process_tts_for_segment(event, seg_chain)
+                    # 框架 TTS 转换后若产生了 Record，也需要确保 Reply 已被移除
+                    if self._chain_has_voice(seg_chain):
+                        seg_chain = self._remove_reply_components(seg_chain)
+                self._log_segment(i + 1, len(segments), seg_chain, "主动发送" if is_proactive else "分段发送")
+                await self._send_proactive_segment(event, seg_chain, i + 1, len(segments))
                 await asyncio.sleep(delay)
             except Exception as e:
                 logger.error(f"[Splitter] 发送失败: {e}")
@@ -675,7 +845,35 @@ class MessageSplitterPlugin(Star):
             last_seg = self._remove_reply_components(last_seg)
         elif suppress_reply_for_voice:
             last_seg = self._remove_reply_components(last_seg)
-        result.chain.clear(); result.chain.extend(last_seg)
+        if is_proactive:
+            # 主动发送：最后一段也需自行发出，发出后清空 chain
+            self._log_segment(len(segments), len(segments), last_seg, "主动发送")
+            await self._send_proactive_segment(event, last_seg, len(segments), len(segments))
+            result.chain.clear()
+        else:
+            # 被动发送：最后一段留给框架的 respond stage 发出
+            result.chain.clear(); result.chain.extend(last_seg)
+
+    async def _send_proactive_segment(self, event: AstrMessageEvent, seg_chain: List[BaseMessageComponent], index: int, total: int):
+        """将一个分段通过原始 Context.send_message 发出。
+
+        设置 ContextVar inhibiting 标记，避免被 patch 后的 send_message 再次拦截。
+        """
+        if not seg_chain:
+            return
+        text_content = "".join([c.text for c in seg_chain if isinstance(c, Plain)])
+        if not text_content.strip(" \t\r\n\u200b") and not any(not isinstance(c, Plain) for c in seg_chain):
+            return
+        mc = MessageChain(); mc.chain = seg_chain
+        token = self._proactive_inhibit.set(True)
+        try:
+            original = getattr(self.context, "_splitter_original_send_message", None)
+            if original is not None:
+                await original(event.unified_msg_origin, mc)
+            else:
+                await self.context.send_message(event.unified_msg_origin, mc)
+        finally:
+            self._proactive_inhibit.reset(token)
 
     def _log_segment(self, index: int, total: int, chain: List[BaseMessageComponent], method: str):
         content = "".join([c.text if isinstance(c, Plain) else f"[{type(c).__name__}]" for c in chain])
