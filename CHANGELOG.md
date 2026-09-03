@@ -6,6 +6,10 @@ https://github.com/nuomicici/astrbot_plugin_splitter/releases/tag/v1.4.3
 安装
 
 # 更新日志
+## 1.4.8
+> 日期：2026-09-04
+1. 修复插件模块导入使用绝对导入导致安装载入时报 ModuleNotFoundError: No module named 'splitter' 的问题
+   - 将 main.py 及子模块内部改为包内相对导入，并添加兼容回退
 ## 1.4.7
 > 日期：2026-09-02
 1. 修复 v1.4.5 引入主动发送分段后，TTS 触发时消息引用（Reply）未被移除导致空引用的问题复现

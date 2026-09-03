@@ -12,41 +12,78 @@ from astrbot.api.message_components import BaseMessageComponent, Plain, Reply, R
 from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star
 
-from splitter.config import (
-    apply_advanced_mode_defaults,
-    apply_simple_mode_defaults,
-    get_adv_cfg,
-    get_cfg,
-    get_simple_cfg,
-    migrate_config,
-)
-from splitter.proactive import (
-    build_synthetic_event,
-    build_synthetic_result,
-    handle_proactive_send,
-    install_send_message_patch,
-)
-from splitter.reply import (
-    get_conversation_key,
-    get_message_queue,
-    has_reply_component,
-    mark_bot_reply,
-    prepend_reply,
-    remember_incoming_message,
-    remove_reply_components,
-    should_add_smart_reply,
-)
-from splitter.splitter import (
-    apply_replace_rules,
-    calculate_delay,
-    split_chain_smart,
-    unescape_replace_str,
-)
-from splitter.tts import (
-    chain_has_voice,
-    process_tts_for_segment,
-    will_use_framework_tts,
-)
+try:
+    from .splitter.config import (
+        apply_advanced_mode_defaults,
+        apply_simple_mode_defaults,
+        get_adv_cfg,
+        get_cfg,
+        get_simple_cfg,
+        migrate_config,
+    )
+    from .splitter.proactive import (
+        build_synthetic_event,
+        build_synthetic_result,
+        handle_proactive_send,
+        install_send_message_patch,
+    )
+    from .splitter.reply import (
+        get_conversation_key,
+        get_message_queue,
+        has_reply_component,
+        mark_bot_reply,
+        prepend_reply,
+        remember_incoming_message,
+        remove_reply_components,
+        should_add_smart_reply,
+    )
+    from .splitter.splitter import (
+        apply_replace_rules,
+        calculate_delay,
+        split_chain_smart,
+        unescape_replace_str,
+    )
+    from .splitter.tts import (
+        chain_has_voice,
+        process_tts_for_segment,
+        will_use_framework_tts,
+    )
+except ImportError:
+    from splitter.config import (
+        apply_advanced_mode_defaults,
+        apply_simple_mode_defaults,
+        get_adv_cfg,
+        get_cfg,
+        get_simple_cfg,
+        migrate_config,
+    )
+    from splitter.proactive import (
+        build_synthetic_event,
+        build_synthetic_result,
+        handle_proactive_send,
+        install_send_message_patch,
+    )
+    from splitter.reply import (
+        get_conversation_key,
+        get_message_queue,
+        has_reply_component,
+        mark_bot_reply,
+        prepend_reply,
+        remember_incoming_message,
+        remove_reply_components,
+        should_add_smart_reply,
+    )
+    from splitter.splitter import (
+        apply_replace_rules,
+        calculate_delay,
+        split_chain_smart,
+        unescape_replace_str,
+    )
+    from splitter.tts import (
+        chain_has_voice,
+        process_tts_for_segment,
+        will_use_framework_tts,
+    )
 
 
 class MessageSplitterPlugin(Star):

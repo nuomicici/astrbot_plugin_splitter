@@ -75,7 +75,10 @@ async def handle_proactive_send(plugin, session, message_chain) -> bool:
         return False
     syn_result = build_synthetic_result(message_chain)
 
-    from splitter.reply import get_conversation_key
+    try:
+        from .reply import get_conversation_key
+    except ImportError:
+        from splitter.reply import get_conversation_key
     conv_key = get_conversation_key(syn_event)
     lock = plugin._get_processing_lock(conv_key)
     async with lock:
