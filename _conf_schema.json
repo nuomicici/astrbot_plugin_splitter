@@ -1,7 +1,7 @@
 {
   "config_mode": {
     "description": "配置模式",
-    "hint": "「简易模式」只显示几个核心开关，适合新手；「进阶模式」可用列表自定义分段符号和清理文本；「专业模式」使用正则表达式完整控制所有行为。切换后请保存并重载插件。",
+    "hint": "「简易模式」只显示几个核心开关，适合新手；「进阶模式」按模块提供列表式配置，无需正则即可微调；「专业模式」使用正则表达式完整控制所有底层参数。切换后请保存并重载插件。",
     "type": "string",
     "options": ["简易模式", "进阶模式", "专业模式"],
     "default": "简易模式"
@@ -66,10 +66,10 @@
     }
   },
 
-  "advanced_settings": {
-    "description": "进阶设置",
+  "adv_basic_settings": {
+    "description": "基础设置",
     "type": "object",
-    "hint": "可以自定义分段符号、清理文本等。不需要懂正则表达式，用列表配置即可。",
+    "hint": "控制插件在进阶模式下的启用范围与触发条件。",
     "condition": {"config_mode": "进阶模式"},
     "items": {
       "enable_group_split_adv": {
@@ -91,6 +91,45 @@
         "options": ["仅AI回复", "全部输出"],
         "default": "仅AI回复"
       },
+      "max_length_no_split_adv": {
+        "description": "最短触发字数",
+        "hint": "文本少于该字数时不分段；填 0 关闭。",
+        "type": "int",
+        "default": 0
+      },
+      "max_length_to_disable_adv": {
+        "description": "最长处理字数",
+        "hint": "文本超过该字数时直接跳过分段；填 0 关闭。",
+        "type": "int",
+        "default": 0
+      },
+      "enable_tts_for_segments_adv": {
+        "description": "分段语音转换",
+        "hint": "框架开启 TTS 时，是否对拆分后的各段文本分别生成语音。",
+        "type": "bool",
+        "default": true
+      },
+      "conversation_blacklist_adv": {
+        "description": "对话黑名单",
+        "hint": "填入对话标识，这些对话不会启用分段。",
+        "type": "list",
+        "default": []
+      },
+      "conversation_whitelist_adv": {
+        "description": "对话白名单",
+        "hint": "仅对白名单中的对话启用分段；黑名单优先。留空则对所有对话生效。",
+        "type": "list",
+        "default": []
+      }
+    }
+  },
+
+  "adv_split_settings": {
+    "description": "分段规则",
+    "type": "object",
+    "hint": "使用普通符号与列表控制切分断点及段落均分，无需编写正则表达式。",
+    "condition": {"config_mode": "进阶模式"},
+    "items": {
       "split_chars_adv": {
         "description": "从哪些符号后断开",
         "hint": "遇到这些符号时，从符号后面断开分成两段。每行填一个符号或文本。换行符请填 \\n。",
@@ -115,6 +154,27 @@
         "type": "bool",
         "default": true
       },
+      "min_segment_length_adv": {
+        "description": "最小段长",
+        "hint": "均分模式下避免切出过短碎片。",
+        "type": "int",
+        "default": 10
+      },
+      "trim_segment_edge_blank_lines_adv": {
+        "description": "清理首尾空行",
+        "hint": "仅清理每段两端空行，不影响段内换行。",
+        "type": "bool",
+        "default": true
+      }
+    }
+  },
+
+  "adv_clean_settings": {
+    "description": "文本清理",
+    "type": "object",
+    "hint": "控制分段前后的文本删除、替换规则与颜文字保护。",
+    "condition": {"config_mode": "进阶模式"},
+    "items": {
       "clean_before_items_adv": {
         "description": "分段前删除这些文本",
         "hint": "在拆分之前，先把这些文本从回复中删掉。每行填一个。",
@@ -163,13 +223,27 @@
         "hint": "开启后，替换规则会同时反向作用于用户输入。例如设置「1→2」，AI 回复中的「1」会显示为「2」，而用户发送的「2」会被还原为「1」再交给 AI。特别的，可用于规避部分模型安全检查。",
         "type": "bool",
         "default": false
+      }
+    }
+  },
+
+  "adv_reply_media_settings": {
+    "description": "回复与组件",
+    "type": "object",
+    "hint": "控制引用回复行为与图片、At、表情等组件的分段归属策略。",
+    "condition": {"config_mode": "进阶模式"},
+    "items": {
+      "enable_reply_adv": {
+        "description": "保留回复",
+        "hint": "保留原有 Reply 引用，并由第一段携带发出。",
+        "type": "bool",
+        "default": true
       },
-      "send_speed_adv": {
-        "description": "发送节奏",
-        "hint": "每条消息之间等多久再发下一条。「自然」根据即将发送的文字长短自动调节；「快速」几乎不停顿；「慢速」每条之间停久一点。",
-        "type": "string",
-        "options": ["自然", "快速", "慢速"],
-        "default": "自然"
+      "enable_smart_reply_adv": {
+        "description": "智能回复",
+        "hint": "发送前检测当前消息后是否已有新消息插嘴，有则给第一段自动添加 Reply。",
+        "type": "bool",
+        "default": false
       },
       "image_strategy_adv": {
         "description": "图片怎么发",
@@ -178,17 +252,42 @@
         "options": ["单独", "跟随下段", "跟随上段"],
         "default": "单独"
       },
-      "conversation_blacklist_adv": {
-        "description": "对话黑名单",
-        "hint": "填入对话标识，这些对话不会启用分段。",
-        "type": "list",
-        "default": []
+      "at_strategy_adv": {
+        "description": "At 策略",
+        "hint": "At 组件的分段归属方式。",
+        "type": "string",
+        "options": ["单独", "跟随下段", "跟随上段", "嵌入"],
+        "default": "跟随下段"
       },
-      "conversation_whitelist_adv": {
-        "description": "对话白名单",
-        "hint": "仅对白名单中的对话启用分段；黑名单优先。留空则对所有对话生效。",
-        "type": "list",
-        "default": []
+      "face_strategy_adv": {
+        "description": "表情策略",
+        "hint": "表情组件的分段归属方式。",
+        "type": "string",
+        "options": ["单独", "跟随下段", "跟随上段", "嵌入"],
+        "default": "嵌入"
+      },
+      "other_media_strategy_adv": {
+        "description": "其他组件策略",
+        "hint": "未知组件的分段归属方式。",
+        "type": "string",
+        "options": ["单独", "跟随下段", "跟随上段", "嵌入"],
+        "default": "跟随下段"
+      }
+    }
+  },
+
+  "adv_delay_settings": {
+    "description": "发送延迟",
+    "type": "object",
+    "hint": "控制每条消息发送的等待间隔。",
+    "condition": {"config_mode": "进阶模式"},
+    "items": {
+      "send_speed_adv": {
+        "description": "发送节奏",
+        "hint": "每条消息之间等多久再发下一条。「自然」根据即将发送的文字长短自动调节；「快速」几乎不停顿；「慢速」每条之间停久一点。",
+        "type": "string",
+        "options": ["自然", "快速", "慢速"],
+        "default": "自然"
       }
     }
   },
@@ -229,6 +328,12 @@
         "hint": "文本超过该字数时直接跳过分段；填 0 关闭。",
         "type": "int",
         "default": 0
+      },
+      "enable_tts_for_segments": {
+        "description": "分段语音转换",
+        "hint": "框架开启 TTS 时，是否对拆分后的各段文本分别生成语音。",
+        "type": "bool",
+        "default": true
       },
       "conversation_blacklist": {
         "description": "对话黑名单",
