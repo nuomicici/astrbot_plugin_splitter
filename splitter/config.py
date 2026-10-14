@@ -31,11 +31,20 @@ def get_simple_cfg(config: dict, key: str, default: Any = None) -> Any:
 
 
 def get_adv_cfg(config: dict, key: str, default: Any = None) -> Any:
-    """从进阶设置分组中获取配置项。"""
+    """从进阶设置分组（模块化分组或旧 advanced_settings）中获取配置项。"""
+    adv_categories = [
+        "adv_basic_settings", "adv_split_settings", "adv_clean_settings",
+        "adv_reply_media_settings", "adv_delay_settings"
+    ]
+    for cat in adv_categories:
+        cat_obj = config.get(cat)
+        if isinstance(cat_obj, dict) and key in cat_obj:
+            return cat_obj[key]
+
     adv = config.get("advanced_settings")
     if isinstance(adv, dict) and key in adv:
         return adv[key]
-    return default
+    return config.get(key, default)
 
 
 def apply_simple_mode_defaults(config: dict) -> dict:
@@ -79,6 +88,7 @@ def apply_simple_mode_defaults(config: dict) -> dict:
     overrides["min_segment_length"] = 10
     overrides["balanced_split_ratio_min"] = 0.4
     overrides["balanced_split_ratio_max"] = 0.9
+    overrides["enable_tts_for_segments"] = True
 
     logger.info("[Splitter] 当前为简易模式，已应用预设配置")
     return overrides
@@ -99,10 +109,10 @@ def apply_advanced_mode_defaults(config: dict) -> dict:
     overrides["max_segments"] = get_adv_cfg(config, "max_segments_adv", 7)
     overrides["enable_smart_split"] = True
     overrides["balanced_split_mode"] = get_adv_cfg(config, "balanced_split_adv", True)
-    overrides["min_segment_length"] = 10
+    overrides["min_segment_length"] = get_adv_cfg(config, "min_segment_length_adv", 10)
     overrides["balanced_split_ratio_min"] = 0.4
     overrides["balanced_split_ratio_max"] = 0.9
-    overrides["trim_segment_edge_blank_lines"] = True
+    overrides["trim_segment_edge_blank_lines"] = get_adv_cfg(config, "trim_segment_edge_blank_lines_adv", True)
 
     overrides["clean_before_items"] = get_adv_cfg(config, "clean_before_items_adv", [])
     overrides["clean_after_items"] = get_adv_cfg(config, "clean_after_items_adv", [])
@@ -111,12 +121,12 @@ def apply_advanced_mode_defaults(config: dict) -> dict:
     overrides["reverse_replace"] = get_adv_cfg(config, "reverse_replace_adv", False)
 
     overrides["image_strategy"] = get_adv_cfg(config, "image_strategy_adv", "单独")
-    overrides["at_strategy"] = "跟随下段"
-    overrides["face_strategy"] = "嵌入"
-    overrides["other_media_strategy"] = "跟随下段"
+    overrides["at_strategy"] = get_adv_cfg(config, "at_strategy_adv", "跟随下段")
+    overrides["face_strategy"] = get_adv_cfg(config, "face_strategy_adv", "嵌入")
+    overrides["other_media_strategy"] = get_adv_cfg(config, "other_media_strategy_adv", "跟随下段")
 
-    overrides["enable_reply"] = True
-    overrides["enable_smart_reply"] = False
+    overrides["enable_reply"] = get_adv_cfg(config, "enable_reply_adv", True)
+    overrides["enable_smart_reply"] = get_adv_cfg(config, "enable_smart_reply_adv", False)
 
     overrides["conversation_blacklist"] = get_adv_cfg(config, "conversation_blacklist_adv", [])
     overrides["conversation_whitelist"] = get_adv_cfg(config, "conversation_whitelist_adv", [])
@@ -133,8 +143,9 @@ def apply_advanced_mode_defaults(config: dict) -> dict:
         overrides["linear_base"] = 0.5
         overrides["linear_factor"] = 0.1
 
-    overrides["max_length_no_split"] = 0
-    overrides["max_length_to_disable"] = 0
+    overrides["max_length_no_split"] = get_adv_cfg(config, "max_length_no_split_adv", 0)
+    overrides["max_length_to_disable"] = get_adv_cfg(config, "max_length_to_disable_adv", 0)
+    overrides["enable_tts_for_segments"] = get_adv_cfg(config, "enable_tts_for_segments_adv", True)
 
     logger.info("[Splitter] 当前为进阶模式，已应用预设配置")
     return overrides
@@ -151,7 +162,7 @@ def migrate_config(config: dict) -> None:
     for rules_key in ["replace_rules", "replace_rules_adv"]:
         rules = config.get(rules_key)
         if not isinstance(rules, list):
-            for cat in ["clean_settings", "advanced_settings"]:
+            for cat in ["clean_settings", "advanced_settings", "adv_clean_settings"]:
                 cat_obj = config.get(cat)
                 if isinstance(cat_obj, dict):
                     rules = cat_obj.get(rules_key)
@@ -164,18 +175,57 @@ def migrate_config(config: dict) -> None:
                 if isinstance(rule, dict) and "__template_key" not in rule:
                     rule["__template_key"] = "replace_rule"
 
+    # 1.8. 进阶模式结构迁移：若存在旧 advanced_settings 字典，将其平滑迁移至模块化进阶分组中
+    adv_old = config.get("advanced_settings")
+    if isinstance(adv_old, dict):
+        adv_groups = {
+            "adv_basic_settings": [
+                "enable_group_split_adv", "enable_proactive_split_adv", "split_scope_adv",
+                "max_length_no_split_adv", "max_length_to_disable_adv", "enable_tts_for_segments_adv",
+                "conversation_blacklist_adv", "conversation_whitelist_adv"
+            ],
+            "adv_split_settings": [
+                "split_chars_adv", "no_split_around_adv", "max_segments_adv",
+                "balanced_split_adv", "min_segment_length_adv", "trim_segment_edge_blank_lines_adv"
+            ],
+            "adv_clean_settings": [
+                "clean_before_items_adv", "clean_after_items_adv", "inject_kaomoji_prompt_adv",
+                "replace_rules_adv", "reverse_replace_adv"
+            ],
+            "adv_reply_media_settings": [
+                "enable_reply_adv", "enable_smart_reply_adv", "image_strategy_adv",
+                "at_strategy_adv", "face_strategy_adv", "other_media_strategy_adv"
+            ],
+            "adv_delay_settings": [
+                "send_speed_adv"
+            ]
+        }
+        for g_name, g_keys in adv_groups.items():
+            if g_name not in config or not isinstance(config[g_name], dict):
+                config[g_name] = {}
+            for k in g_keys:
+                if k in adv_old and k not in config[g_name]:
+                    config[g_name][k] = adv_old.pop(k)
+        if not adv_old:
+            config.pop("advanced_settings", None)
+
     # 2. 结构迁移：将顶层扁平配置移入嵌套对象
     mapping = {
         "simple_settings": ["enable_split", "max_segments_simple", "send_speed", "protect_emoji",
                             "image_handling", "enable_reply_simple", "enable_proactive_split_simple",
                             "remove_texts_simple"],
-        "advanced_settings": ["enable_group_split_adv", "enable_proactive_split_adv", "split_scope_adv",
-                              "split_chars_adv", "no_split_around_adv", "max_segments_adv", "balanced_split_adv",
-                              "clean_before_items_adv", "clean_after_items_adv", "inject_kaomoji_prompt_adv",
-                              "replace_rules_adv", "reverse_replace_adv", "send_speed_adv", "image_strategy_adv",
-                              "conversation_blacklist_adv", "conversation_whitelist_adv"],
+        "adv_basic_settings": ["enable_group_split_adv", "enable_proactive_split_adv", "split_scope_adv",
+                               "max_length_no_split_adv", "max_length_to_disable_adv", "enable_tts_for_segments_adv",
+                               "conversation_blacklist_adv", "conversation_whitelist_adv"],
+        "adv_split_settings": ["split_chars_adv", "no_split_around_adv", "max_segments_adv",
+                               "balanced_split_adv", "min_segment_length_adv", "trim_segment_edge_blank_lines_adv"],
+        "adv_clean_settings": ["clean_before_items_adv", "clean_after_items_adv", "inject_kaomoji_prompt_adv",
+                               "replace_rules_adv", "reverse_replace_adv"],
+        "adv_reply_media_settings": ["enable_reply_adv", "enable_smart_reply_adv", "image_strategy_adv",
+                                     "at_strategy_adv", "face_strategy_adv", "other_media_strategy_adv"],
+        "adv_delay_settings": ["send_speed_adv"],
         "basic_settings": ["enable_group_split", "enable_proactive_split", "split_scope",
-                           "max_length_no_split", "max_length_to_disable",
+                           "max_length_no_split", "max_length_to_disable", "enable_tts_for_segments",
                            "conversation_blacklist", "conversation_whitelist"],
         "split_settings": ["split_mode", "split_chars", "split_regex", "no_split_around",
                            "enable_smart_split", "balanced_split_mode", "max_segments",
