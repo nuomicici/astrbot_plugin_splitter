@@ -269,17 +269,22 @@ class MessageSplitterPlugin(Star):
     def _is_model_generated_reply(self, event: AstrMessageEvent, result: Any) -> bool:
         if not result:
             return False
+        # Some plugins rebuild MessageEventResult right before send, which drops
+        # the LLM/non-LLM metadata. Any positive signal below counts as an LLM
+        # reply so splitting still works after such a rebuild.
         is_model_result = getattr(result, "is_model_result", None)
         if callable(is_model_result):
             try:
-                return bool(is_model_result())
+                if bool(is_model_result()):
+                    return True
             except Exception:
                 pass
         content_type = getattr(result, "result_content_type", None)
         if content_type is not None:
             type_name = getattr(content_type, "name", "")
-            return type_name in {"LLM_RESULT", "AGENT_RUNNER_ERROR", "AGENT_RUNNER_RESULT", "TOOL_RESULT", "TOOL_CALL"}
-        return getattr(event, "__is_llm_reply", False)
+            if type_name in {"LLM_RESULT", "AGENT_RUNNER_ERROR", "AGENT_RUNNER_RESULT", "TOOL_RESULT", "TOOL_CALL"}:
+                return True
+        return bool(getattr(event, "__is_llm_reply", False))
 
     def _log_segment(self, index: int, total: int, chain: List[BaseMessageComponent], method: str) -> None:
         content = "".join([c.text if isinstance(c, Plain) else f"[{type(c).__name__}]" for c in chain])
