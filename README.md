@@ -4,7 +4,7 @@
 # 对话分段PRO
 
 
-[![当前版本](https://img.shields.io/badge/v1.4.9-purple?style=for-the-badge)](#未来计划)
+[![当前版本](https://img.shields.io/badge/v1.5.0-purple?style=for-the-badge)](#未来计划)
 [![来许愿！](https://img.shields.io/badge/来许愿！-ff69b4?style=for-the-badge)](#联系)
 [![审美累积](https://img.shields.io/badge/审美累积-aa6732?style=for-the-badge)](#避免出现)
 
