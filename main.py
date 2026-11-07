@@ -37,6 +37,10 @@ try:
         remove_reply_components,
         should_add_smart_reply,
     )
+    from .splitter.qqofficial import (
+        get_passive_reply_limit,
+        should_send_via_event,
+    )
     from .splitter.splitter import (
         apply_replace_rules,
         calculate_delay,
@@ -72,6 +76,10 @@ except ImportError:
         remember_incoming_message,
         remove_reply_components,
         should_add_smart_reply,
+    )
+    from splitter.qqofficial import (
+        get_passive_reply_limit,
+        should_send_via_event,
     )
     from splitter.splitter import (
         apply_replace_rules,
@@ -311,6 +319,14 @@ class MessageSplitterPlugin(Star):
             return
         mc = MessageChain()
         mc.chain = seg_chain
+
+        # QQ 官方机器人：群聊通常没有「主动消息」权限，经 Context.send_message
+        # 发出的分段会因无 msg_id 被平台以 40034105 拒绝。
+        # 被动场景改走 event.send()，适配器会携带原消息 msg_id（被动回复，无需主动权限）。
+        if should_send_via_event(event):
+            await event.send(mc)
+            return
+
         token = self._proactive_inhibit.set(True)
         try:
             original = getattr(self.context, "_splitter_original_send_message", None)
@@ -392,6 +408,16 @@ class MessageSplitterPlugin(Star):
         }
 
         max_segs = self._get_cfg("max_segments", 7)
+        # QQ 官方机器人：每条用户消息的被动回复次数有限（群聊 5 次 / 单聊 4 次），
+        # 最后一段由框架发出，同样占用一次，因此分段总数不得超过该上限。
+        passive_limit = get_passive_reply_limit(event)
+        if passive_limit > 0 and (max_segs <= 0 or max_segs > passive_limit):
+            logger.info(
+                "[Splitter] QQ 官方平台被动回复次数上限为 {}，分段上限已由 {} 调整为 {}".format(
+                    passive_limit, max_segs, passive_limit
+                )
+            )
+            max_segs = passive_limit
         ideal_length = 0
         if self._get_cfg("balanced_split_mode", False) and max_segs > 0:
             text_weight = sum(len(c.text.replace(" ", "")) for c in result.chain if isinstance(c, Plain))

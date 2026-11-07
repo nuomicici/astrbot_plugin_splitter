@@ -137,6 +137,8 @@ def build_synthetic_event(session) -> "AstrMessageEvent | None":
         ev._has_send_oper = False
         ev._force_stopped = False
         ev.plugins_name = None
+        # 标记为合成事件：没有真实的用户消息，不能走 event.send() 被动回复
+        ev._splitter_synthetic = True
         return ev
     except Exception:
         logger.error("[Splitter] 构造合成事件失败", exc_info=True)
